@@ -1,9 +1,8 @@
 
 const { PollyClient, SynthesizeSpeechCommand } = require('@aws-sdk/client-polly');
 
-const pollyClient = new PollyClient({ region: process.env.AWS_REGION });
-
 const getSpeech = async (text) => {
+  const pollyClient = new PollyClient({ region: process.env.AWS_REGION });
   const params = {
     OutputFormat: 'pcm',
     SampleRate: '8000',
