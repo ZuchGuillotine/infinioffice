@@ -1,0 +1,49 @@
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Call {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String    @db.Uuid
+  callerPhone     String?   @db.VarChar(20)
+  durationSeconds Int?
+  transcript      String?
+  recordingUrl    String?
+  metadata        Json?
+  createdAt       DateTime  @default(now()) @db.Timestamptz
+  turns           Turn[]
+}
+
+model Turn {
+  id            BigInt   @id @default(autoincrement())
+  callId        String   @db.Uuid
+  turnIndex     Int
+  asrMs         Int?
+  llmMs         Int?
+  ttsMs         Int?
+  transcriptIn  String?
+  transcriptOut String?
+  createdAt     DateTime @default(now()) @db.Timestamptz
+  call          Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+}
+
+model Appointment {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String   @db.Uuid
+  externalId        String?
+  calendarProvider  String?  @db.VarChar
+  startAt           DateTime @db.Timestamptz
+  endAt             DateTime @db.Timestamptz
+  service           String?
+  provider          String?
+  contactPhone      String?  @db.VarChar(20)
+  notes             String?
+  status            String?  @db.VarChar
+  createdAt         DateTime @default(now()) @db.Timestamptz
+}
