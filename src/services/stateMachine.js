@@ -1,78 +1,249 @@
-
 const { createMachine, assign } = require('xstate');
+const { createAppointment } = require('./db');
 
 const bookingMachine = createMachine({
   id: 'booking',
-  initial: 'greet',
+  initial: 'idle',
   context: {
+    intent: null,
     service: null,
-    timeWindow: null,
+    preferredTime: null,
     contact: null,
+    confidence: 0,
+    sessionId: null,
+    currentResponse: null,
   },
   states: {
-    greet: {
+    idle: {
       on: {
-        HEAR_SPEECH: {
-          actions: 'logSpeech',
-          target: 'collectService',
+        PROCESS_INTENT: {
+          actions: assign({
+            intent: (context, event) => event.intent,
+            confidence: (context, event) => event.confidence,
+            currentResponse: (context, event) => event.response,
+            service: (context, event) => event.bookingData?.service || context.service,
+            preferredTime: (context, event) => event.bookingData?.preferredTime || context.preferredTime,
+            contact: (context, event) => event.bookingData?.contact || context.contact,
+          }),
+          target: 'handleIntent',
         },
       },
     },
+    handleIntent: {
+      always: [
+        {
+          cond: 'isBookingIntent',
+          target: 'bookingFlow',
+        },
+        {
+          cond: 'isNonBookingIntent',
+          target: 'respondAndIdle',
+        },
+        {
+          target: 'respondAndIdle',
+        },
+      ],
+    },
+    bookingFlow: {
+      always: [
+        {
+          cond: 'hasAllBookingData',
+          target: 'confirm',
+        },
+        {
+          cond: 'needsService',
+          target: 'collectService',
+        },
+        {
+          cond: 'needsTime',
+          target: 'collectTimeWindow',
+        },
+        {
+          cond: 'needsContact',
+          target: 'collectContact',
+        },
+        {
+          target: 'collectService',
+        },
+      ],
+    },
     collectService: {
       on: {
-        HEAR_SPEECH: {
-          actions: assign({ service: (context, event) => event.speech }),
-          target: 'collectTimeWindow',
+        PROCESS_INTENT: {
+          actions: assign({
+            service: (context, event) => event.bookingData?.service || context.service,
+            preferredTime: (context, event) => event.bookingData?.preferredTime || context.preferredTime,
+            contact: (context, event) => event.bookingData?.contact || context.contact,
+            currentResponse: (context, event) => event.response,
+          }),
+          target: 'bookingFlow',
         },
       },
     },
     collectTimeWindow: {
       on: {
-        HEAR_SPEECH: {
-          actions: assign({ timeWindow: (context, event) => event.speech }),
-          target: 'collectContact',
+        PROCESS_INTENT: {
+          actions: assign({
+            service: (context, event) => event.bookingData?.service || context.service,
+            preferredTime: (context, event) => event.bookingData?.preferredTime || context.preferredTime,
+            contact: (context, event) => event.bookingData?.contact || context.contact,
+            currentResponse: (context, event) => event.response,
+          }),
+          target: 'bookingFlow',
         },
       },
     },
     collectContact: {
       on: {
-        HEAR_SPEECH: {
-          actions: assign({ contact: (context, event) => event.speech }),
-          target: 'confirm',
+        PROCESS_INTENT: {
+          actions: assign({
+            service: (context, event) => event.bookingData?.service || context.service,
+            preferredTime: (context, event) => event.bookingData?.preferredTime || context.preferredTime,
+            contact: (context, event) => event.bookingData?.contact || context.contact,
+            currentResponse: (context, event) => event.response,
+          }),
+          target: 'bookingFlow',
         },
       },
     },
     confirm: {
       on: {
-        HEAR_SPEECH: [
+        PROCESS_INTENT: [
           {
-            cond: (context, event) => /yes/i.test(event.speech),
+            cond: 'isConfirmation',
             target: 'book',
           },
           {
-            target: 'collectTimeWindow',
+            actions: 'resetBookingData',
+            target: 'collectService',
           },
         ],
       },
     },
     book: {
       invoke: {
-        src: 'createEvent',
-        onDone: 'success',
-        onError: 'fallback',
+        id: 'createAppointment',
+        src: 'createAppointment',
+        onDone: {
+          target: 'success',
+          actions: assign({
+            currentResponse: () => 'Your appointment has been booked successfully! You should receive a confirmation shortly.'
+          }),
+        },
+        onError: {
+          target: 'fallback',
+          actions: assign({
+            currentResponse: () => 'I apologize, but I encountered an issue booking your appointment. Please call us directly to schedule.'
+          }),
+        },
       },
     },
-    fallback: {},
-    success: {},
+    success: {
+      after: {
+        5000: 'idle', // Return to idle after 5 seconds
+      },
+      on: {
+        PROCESS_INTENT: 'handleIntent',
+      },
+    },
+    fallback: {
+      after: {
+        3000: 'idle', // Return to idle after 3 seconds
+      },
+      on: {
+        PROCESS_INTENT: 'handleIntent',
+      },
+    },
+    respondAndIdle: {
+      after: {
+        100: 'idle', // Quick transition back to idle for non-booking intents
+      },
+    },
   },
 }, {
+  guards: {
+    isBookingIntent: (context, event) => event.intent === 'booking',
+    isNonBookingIntent: (context, event) => ['hours', 'location', 'services', 'other'].includes(event.intent),
+    hasAllBookingData: (context) => context.service && context.preferredTime && context.contact,
+    needsService: (context) => !context.service,
+    needsTime: (context) => context.service && !context.preferredTime,
+    needsContact: (context) => context.service && context.preferredTime && !context.contact,
+    isConfirmation: (context, event) => {
+      const speech = event.originalSpeech || '';
+      return /\b(yes|yeah|yep|correct|right|confirm|book|schedule)\b/i.test(speech);
+    },
+  },
   actions: {
     logSpeech: (context, event) => {
-      console.log(event.speech);
+      console.log('Speech:', event.speech);
+    },
+    resetBookingData: assign({
+      service: null,
+      preferredTime: null,
+      contact: null,
+    }),
+  },
+  services: {
+    createAppointment: async (context) => {
+      // Parse the booking data for database storage
+      const appointmentData = {
+        organizationId: process.env.DEFAULT_ORG_ID || '00000000-0000-0000-0000-000000000001',
+        service: context.service,
+        contactPhone: extractPhoneNumber(context.contact),
+        notes: `Service: ${context.service}, Time: ${context.preferredTime}, Contact: ${context.contact}`,
+        status: 'scheduled',
+        startAt: parseDateTime(context.preferredTime),
+        endAt: addHour(parseDateTime(context.preferredTime)),
+      };
+      
+      return await createAppointment(appointmentData);
     },
   },
 });
 
+// Utility functions for appointment creation
+const extractPhoneNumber = (contact) => {
+  if (!contact) return null;
+  const phoneMatch = contact.match(/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/);
+  return phoneMatch ? phoneMatch[0] : null;
+};
+
+const parseDateTime = (timeString) => {
+  if (!timeString) return new Date();
+  
+  // Simple date parsing - in production, use a more robust date parser
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  
+  // Default to tomorrow at 10 AM if we can't parse the time
+  if (/tomorrow/i.test(timeString)) {
+    tomorrow.setHours(10, 0, 0, 0);
+    return tomorrow;
+  }
+  
+  if (/monday|tuesday|wednesday|thursday|friday/i.test(timeString)) {
+    // Default to next weekday at 10 AM
+    const nextWeek = new Date(now);
+    nextWeek.setDate(now.getDate() + 7);
+    nextWeek.setHours(10, 0, 0, 0);
+    return nextWeek;
+  }
+  
+  // Default to tomorrow at 10 AM
+  tomorrow.setHours(10, 0, 0, 0);
+  return tomorrow;
+};
+
+const addHour = (date) => {
+  const newDate = new Date(date);
+  newDate.setHours(newDate.getHours() + 1);
+  return newDate;
+};
+
 module.exports = {
   bookingMachine,
+  extractPhoneNumber,
+  parseDateTime,
+  addHour,
 };
