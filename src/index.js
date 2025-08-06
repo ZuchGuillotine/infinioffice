@@ -2,11 +2,12 @@ const fastify = require('fastify')({ logger: true });
 const WebSocket = require('ws');
 const { interpret } = require('xstate');
 const { handleIncomingCall } = require('./services/telephony');
-const { getTranscription } = require('./services/stt');
+const { STTService } = require('./services/stt');
 const { processMessage, sessionManager, getCompletion } = require('./services/llm');
-const { getSpeech } = require('./services/tts');
+const { TTSService } = require('./services/tts');
 const { bookingMachine } = require('./services/stateMachine');
 const { createCall, createTurn, updateTurn, updateCall } = require('./services/db');
+const { performanceMonitor } = require('./services/performance');
 
 fastify.post('/voice', handleIncomingCall);
 
@@ -15,19 +16,310 @@ const wss = new WebSocket.Server({ server: fastify.server });
 wss.on('connection', (ws) => {
   console.log('Client connected - initializing enhanced booking service');
 
+  // Initialize services
   const bookingService = interpret(bookingMachine).start();
+  const sttService = new STTService();
+  const ttsService = new TTSService();
+  
+  // Connection state
   let callId = null;
   let turnIndex = 0;
+  let streamSid = null;
+  let isProcessingTurn = false;
+  let conversationTimeout = null;
+  let silenceTimeout = null;
   const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
-  // Send initial greeting
-  const initialGreeting = "Hello! I'm here to help you schedule an appointment. How can I assist you today?";
-  getSpeech(initialGreeting).then(speechStream => {
-    console.log('Sending initial greeting:', initialGreeting);
-    speechStream.pipe(ws, { end: false });
-  }).catch(error => {
-    console.error('Failed to send initial greeting:', error);
+  console.log('Session initialized:', sessionId);
+
+  // Start STT listening immediately
+  sttService.startListening();
+
+  // Handle STT events
+  sttService.on('ready', () => {
+    console.log('STT service ready, sending initial greeting');
+    sendInitialGreeting();
   });
+
+  sttService.on('transcript', async (data) => {
+    if (data.isFinal && !isProcessingTurn && data.text.trim().length > 0) {
+      console.log(`Final transcript: "${data.text}" (confidence: ${data.confidence})`);
+      await processTurn(data.text, data.confidence);
+    } else if (!data.isFinal && data.text.trim().length > 0) {
+      console.log(`Interim transcript: "${data.text}"`);
+      // Reset conversation timeout on any speech activity
+      resetConversationTimeout();
+    }
+  });
+
+  sttService.on('bargeIn', () => {
+    console.log('Barge-in detected - interrupting TTS');
+    ttsService.interruptStream();
+    resetConversationTimeout();
+  });
+
+  sttService.on('speechStarted', () => {
+    console.log('Speech started');
+    clearSilenceTimeout();
+  });
+
+  sttService.on('speechEnded', () => {
+    console.log('Speech ended');
+    resetSilenceTimeout();
+  });
+
+  sttService.on('silence', () => {
+    console.log('Silence detected');
+    // Handle prolonged silence
+    if (!isProcessingTurn) {
+      handleSilence();
+    }
+  });
+
+  sttService.on('error', (error) => {
+    console.error('STT Service error:', error);
+    // Attempt to restart STT on error
+    setTimeout(() => {
+      if (!sttService.isListening) {
+        console.log('Attempting to restart STT service');
+        sttService.startListening();
+      }
+    }, 1000);
+  });
+
+  // Send initial greeting
+  const sendInitialGreeting = async () => {
+    try {
+      const initialGreeting = "Hello! I'm here to help you schedule an appointment. How can I assist you today?";
+      
+      ttsService.resetBargeInDetection && ttsService.resetBargeInDetection();
+      const result = await ttsService.generateAndStream(initialGreeting, ws, { streamId: streamSid });
+      
+      console.log('Initial greeting sent:', {
+        text: initialGreeting,
+        metrics: result.metrics
+      });
+      
+      resetConversationTimeout();
+    } catch (error) {
+      console.error('Failed to send initial greeting:', error);
+    }
+  };
+
+  // Process a complete turn (STT -> LLM -> TTS)
+  const processTurn = async (transcript, confidence) => {
+    if (isProcessingTurn) {
+      console.log('Turn already in progress, ignoring:', transcript);
+      return;
+    }
+
+    isProcessingTurn = true;
+    const turnStartTime = Date.now();
+    let currentTurnId = null;
+
+    try {
+      console.log(`Starting turn ${turnIndex}: "${transcript}"`);
+
+      // Step 1: Process message with LLM and get turn ID
+      const llmStartTime = Date.now();
+      const llmResult = await processMessage(
+        transcript,
+        sessionId,
+        { state: bookingService.state.value },
+        callId,
+        turnIndex
+      );
+      const llmMs = Date.now() - llmStartTime;
+      currentTurnId = llmResult.turnId;
+
+      // Initialize performance monitoring
+      if (currentTurnId) {
+        performanceMonitor.startTurn(currentTurnId, callId);
+        performanceMonitor.recordPhase(currentTurnId, 'llm', llmStartTime, Date.now());
+      }
+
+      // Step 2: Update State Machine
+      const currentState = bookingService.send({
+        type: 'PROCESS_INTENT',
+        intent: llmResult.intent,
+        confidence: llmResult.confidence,
+        response: llmResult.response,
+        bookingData: llmResult.bookingData,
+        originalSpeech: transcript
+      });
+
+      // Use state machine response if available, otherwise LLM response
+      const responseText = currentState.context.currentResponse || llmResult.response;
+
+      // Step 3: Generate and stream TTS
+      const ttsStartTime = Date.now();
+      const ttsResult = await ttsService.generateAndStream(responseText, ws, { streamId });
+      const ttsMs = Date.now() - ttsStartTime;
+
+      // Record TTS performance
+      if (currentTurnId) {
+        performanceMonitor.recordPhase(currentTurnId, 'tts', ttsStartTime, Date.now());
+      }
+
+      // Step 4: Log performance metrics
+      const totalMs = Date.now() - turnStartTime;
+      const targetMet = performanceMonitor.isTargetMet(totalMs);
+
+      console.log(`Turn ${turnIndex} completed:`, {
+        transcript,
+        response: responseText,
+        intent: llmResult.intent,
+        confidence: llmResult.confidence,
+        state: currentState.value,
+        processingTime: {
+          llm: llmMs,
+          tts: ttsMs,
+          total: totalMs
+        },
+        targetMet,
+        turnId: currentTurnId
+      });
+
+      // Complete performance monitoring
+      if (currentTurnId) {
+        await performanceMonitor.completeTurn(currentTurnId);
+      }
+
+      turnIndex++;
+
+      // Check for final state
+      if (currentState.matches('success') || currentState.matches('fallback')) {
+        await handleConversationEnd(currentState);
+      }
+
+    } catch (error) {
+      console.error('Error processing turn:', error);
+      
+      // Complete performance monitoring with error
+      if (currentTurnId) {
+        try {
+          await performanceMonitor.completeTurn(currentTurnId);
+        } catch (perfError) {
+          console.error('Error completing performance monitoring:', perfError);
+        }
+      }
+      
+      await handleProcessingError(error);
+    } finally {
+      isProcessingTurn = false;
+      resetConversationTimeout();
+    }
+  };
+
+  // Handle prolonged silence
+  const handleSilence = async () => {
+    try {
+      const timeoutResponse = "I'm still here. Are you ready to schedule an appointment?";
+      await ttsService.generateAndStream(timeoutResponse, ws, { streamId });
+      resetConversationTimeout();
+    } catch (error) {
+      console.error('Error handling silence:', error);
+    }
+  };
+
+  // Handle processing errors
+  const handleProcessingError = async (error) => {
+    try {
+      const errorResponse = "I'm sorry, I'm experiencing technical difficulties. Could you please repeat that?";
+      await ttsService.generateAndStream(errorResponse, ws, { streamId });
+      
+      if (callId) {
+        await updateCall(callId, {
+          error: error.message,
+          status: 'error'
+        });
+      }
+    } catch (ttsError) {
+      console.error('Failed to send error response:', ttsError);
+    }
+  };
+
+  // Handle conversation end
+  const handleConversationEnd = async (finalState) => {
+    const status = finalState.matches('success') ? 'completed' : 'failed';
+    
+    if (callId) {
+      try {
+        await updateCall(callId, {
+          status,
+          endedAt: new Date(),
+          finalContext: finalState.context,
+          totalTurns: turnIndex
+        });
+      } catch (error) {
+        console.error('Failed to update final call status:', error);
+      }
+    }
+
+    console.log('Conversation completed:', {
+      finalState: finalState.value,
+      finalContext: finalState.context
+    });
+
+    // Set a longer timeout for call completion
+    setTimeout(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
+    }, 5000);
+  };
+
+  // Timeout management
+  const resetConversationTimeout = () => {
+    if (conversationTimeout) {
+      clearTimeout(conversationTimeout);
+    }
+    conversationTimeout = setTimeout(() => {
+      handleConversationTimeout();
+    }, 30000); // 30 second conversation timeout
+  };
+
+  const resetSilenceTimeout = () => {
+    if (silenceTimeout) {
+      clearTimeout(silenceTimeout);
+    }
+    silenceTimeout = setTimeout(() => {
+      if (!isProcessingTurn) {
+        handleSilence();
+      }
+    }, 5000); // 5 second silence timeout
+  };
+
+  const clearSilenceTimeout = () => {
+    if (silenceTimeout) {
+      clearTimeout(silenceTimeout);
+      silenceTimeout = null;
+    }
+  };
+
+  const handleConversationTimeout = async () => {
+    try {
+      console.log('Conversation timeout reached');
+      const timeoutMessage = "I haven't heard from you in a while. If you'd like to schedule an appointment, please call back. Have a great day!";
+      await ttsService.generateAndStream(timeoutMessage, ws, { streamId });
+      
+      if (callId) {
+        await updateCall(callId, {
+          status: 'timeout',
+          endedAt: new Date()
+        });
+      }
+      
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        }
+      }, 3000);
+    } catch (error) {
+      console.error('Error handling conversation timeout:', error);
+      ws.close();
+    }
+  };
 
   // Log state transitions for debugging
   bookingService.onTransition((state) => {
@@ -35,9 +327,8 @@ wss.on('connection', (ws) => {
       value: state.value,
       context: {
         service: state.context.service,
-        timeWindow: state.context.timeWindow,
-        contact: state.context.contact,
-        retryCount: state.context.retryCount
+        preferredTime: state.context.preferredTime,
+        contact: state.context.contact
       },
       changed: state.changed
     });
@@ -54,141 +345,81 @@ wss.on('connection', (ws) => {
     }
   });
 
+  // Handle Twilio WebSocket messages
   ws.on('message', async (message) => {
     try {
-      const { event, stream, callSid } = JSON.parse(message);
+      const data = JSON.parse(message);
 
-      // Initialize call tracking
-      if (callSid && !callId) {
-        try {
-          const call = await createCall({
-            twilioCallSid: callSid,
-            status: 'in_progress',
-            startedAt: new Date(),
-            currentState: 'greet'
-          });
-          callId = call.id;
-          console.log('Call tracking initialized:', callId);
-        } catch (error) {
-          console.error('Failed to initialize call tracking:', error);
-        }
-      }
-
-      if (event === 'media' && stream) {
-        const startTime = Date.now();
+      if (data.event === 'start') {
+        streamSid = data.start.streamSid;
+        const callSid = data.start.callSid;
         
-        // Step 1: Speech-to-Text
-        const transcription = await getTranscription(stream);
-        const asrMs = Date.now() - startTime;
+        console.log('Twilio stream started:', { streamSid, callSid });
         
-        if (!transcription || transcription.trim().length === 0) {
-          console.log('Empty transcription received');
-          return;
-        }
-
-        console.log(`Transcription (Turn ${turnIndex}): ${transcription}`);
-        
-        // Step 2: LLM Processing with intent detection and response generation
-        const llmStartTime = Date.now();
-        const llmResult = await processMessage(
-          transcription, 
-          sessionId, 
-          { state: bookingService.state.value },
-          callId,
-          turnIndex
-        );
-        const llmMs = Date.now() - llmStartTime;
-
-        // Step 3: Update State Machine with LLM results
-        const currentState = bookingService.send({
-          type: 'PROCESS_INTENT',
-          intent: llmResult.intent,
-          confidence: llmResult.confidence,
-          response: llmResult.response,
-          bookingData: llmResult.bookingData,
-          originalSpeech: transcription
-        });
-
-        // Use the response from state machine if available, otherwise LLM response
-        const responseText = currentState.context.currentResponse || llmResult.response;
-        
-        // Step 4: Text-to-Speech
-        const ttsStartTime = Date.now();
-        const speechStream = await getSpeech(responseText);
-        const ttsMs = Date.now() - ttsStartTime;
-
-        console.log('Generated response:', responseText);
-
-        // Step 5: Send audio response
-        speechStream.pipe(ws, { end: false });
-
-        // Step 6: Log performance metrics (already handled in processMessage)
-        console.log(`Turn ${turnIndex} completed:`, {
-          intent: llmResult.intent,
-          confidence: llmResult.confidence,
-          currentState: currentState.value,
-          bookingData: currentState.context,
-          processingTime: {
-            asr: asrMs,
-            llm: llmMs,
-            tts: ttsMs,
-            total: Date.now() - startTime
+        // Initialize call tracking
+        if (callSid && !callId) {
+          try {
+            const call = await createCall({
+              twilioCallSid: callSid,
+              status: 'in_progress',
+              startedAt: new Date(),
+              currentState: 'greeting',
+              organizationId: process.env.DEFAULT_ORG_ID || '00000000-0000-0000-0000-000000000001'
+            });
+            callId = call.id;
+            console.log('Call tracking initialized:', callId);
+          } catch (error) {
+            console.error('Failed to initialize call tracking:', error);
+            // Continue without database tracking
           }
-        });
-
-        turnIndex++;
-
-        // Check if we've reached a final state
-        if (currentState.matches('success') || currentState.matches('fallback')) {
-          const finalStatus = currentState.matches('success') ? 'completed' : 'failed';
-          
-          if (callId) {
-            try {
-              await updateCall(callId, {
-                status: finalStatus,
-                endedAt: new Date(),
-                finalContext: currentState.context,
-                totalTurns: turnIndex
-              });
-            } catch (error) {
-              console.error('Failed to update final call status:', error);
-            }
-          }
-
-          console.log('Booking conversation completed:', {
-            finalState: currentState.value,
-            finalContext: currentState.context
-          });
         }
-      }
-    } catch (error) {
-      console.error('Error processing message:', error);
-      
-      // Send error response
-      try {
-        const errorResponse = "I'm sorry, I'm experiencing technical difficulties. Please try again.";
-        const speechStream = await getSpeech(errorResponse);
-        speechStream.pipe(ws, { end: false });
+
+        // Delay initial greeting slightly to allow connection to stabilize
+        setTimeout(() => {
+          if (sttService.isListening) {
+            sendInitialGreeting();
+          }
+        }, 500);
         
-        // Log error if we have call tracking
+      } else if (data.event === 'media') {
+        // Stream audio data to STT service
+        if (data.media && data.media.payload) {
+          const audioBuffer = Buffer.from(data.media.payload, 'base64');
+          sttService.sendAudio(audioBuffer);
+        }
+        
+      } else if (data.event === 'stop') {
+        console.log('Twilio stream stopped');
+        
+        // Update call status
         if (callId) {
-          updateCall(callId, {
-            status: 'error',
-            error: error.message,
-            endedAt: new Date()
-          }).catch(dbError => {
-            console.error('Failed to log call error:', dbError);
-          });
+          try {
+            await updateCall(callId, {
+              status: 'disconnected',
+              endedAt: new Date()
+            });
+          } catch (error) {
+            console.error('Failed to update call disconnect status:', error);
+          }
         }
-      } catch (speechError) {
-        console.error('Failed to send error response:', speechError);
       }
+      
+    } catch (error) {
+      console.error('Error processing Twilio message:', error);
     }
   });
 
   ws.on('close', () => {
-    console.log('Client disconnected');
+    console.log('WebSocket client disconnected');
+    
+    // Clean up services
+    sttService.stopListening();
+    ttsService.interruptStream();
     bookingService.stop();
+    
+    // Clear timeouts
+    if (conversationTimeout) clearTimeout(conversationTimeout);
+    if (silenceTimeout) clearTimeout(silenceTimeout);
     
     // Clean up session
     sessionManager.clearSession(sessionId);
@@ -197,7 +428,8 @@ wss.on('connection', (ws) => {
     if (callId) {
       updateCall(callId, {
         status: 'disconnected',
-        endedAt: new Date()
+        endedAt: new Date(),
+        totalTurns: turnIndex
       }).catch(error => {
         console.error('Failed to update call disconnect status:', error);
       });
@@ -206,14 +438,23 @@ wss.on('connection', (ws) => {
 
   ws.on('error', (error) => {
     console.error('WebSocket error:', error);
+    
+    // Clean up services
+    sttService.stopListening();
+    ttsService.interruptStream();
     bookingService.stop();
+    
+    // Clear timeouts
+    if (conversationTimeout) clearTimeout(conversationTimeout);
+    if (silenceTimeout) clearTimeout(silenceTimeout);
     
     // Log websocket error
     if (callId) {
       updateCall(callId, {
         status: 'error',
         error: error.message,
-        endedAt: new Date()
+        endedAt: new Date(),
+        totalTurns: turnIndex
       }).catch(dbError => {
         console.error('Failed to log websocket error:', dbError);
       });
@@ -223,6 +464,24 @@ wss.on('connection', (ws) => {
 
 fastify.get('/', async (request, reply) => {
   return { hello: 'world' };
+});
+
+// Performance metrics endpoint
+fastify.get('/metrics', async (request, reply) => {
+  return performanceMonitor.exportMetrics();
+});
+
+// Health check endpoint
+fastify.get('/health', async (request, reply) => {
+  return { 
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    services: {
+      deepgram: !!process.env.DEEPGRAM_API_KEY,
+      openai: !!process.env.OPENAI_API_KEY,
+      database: !!process.env.DATABASE_URL
+    }
+  };
 });
 
 const start = async () => {

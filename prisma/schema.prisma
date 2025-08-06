@@ -10,12 +10,22 @@ generator client {
 
 model Call {
   id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String    @db.Uuid
+  organizationId  String?   @db.Uuid
+  twilioCallSid   String?   @db.VarChar(100)
   callerPhone     String?   @db.VarChar(20)
+  status          String?   @db.VarChar(50)
+  currentState    String?   @db.VarChar(100)
+  context         Json?
+  finalContext    Json?
   durationSeconds Int?
+  totalTurns      Int?
   transcript      String?
   recordingUrl    String?
   metadata        Json?
+  error           String?
+  startedAt       DateTime? @db.Timestamptz
+  endedAt         DateTime? @db.Timestamptz
+  lastTransition  DateTime? @db.Timestamptz
   createdAt       DateTime  @default(now()) @db.Timestamptz
   turns           Turn[]
 }

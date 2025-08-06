@@ -10,12 +10,15 @@ class STTService extends EventEmitter {
     this.isListening = false;
     this.silenceTimeout = null;
     this.lastSpeechTime = null;
+    this.bargeInDetected = false;
+    this.currentTranscript = '';
+    this.interimTranscript = '';
   }
 
-  startListening() {
+  startListening(options = {}) {
     if (this.isListening) return;
 
-    this.connection = this.deepgram.listen.live({
+    const config = {
       model: 'nova-2-phonecall',
       language: 'en-US',
       punctuate: true,
@@ -25,61 +28,119 @@ class STTService extends EventEmitter {
       endpointing: 300,
       diarize: false,
       filler_words: false,
-    });
+      ...options
+    };
 
+    this.connection = this.deepgram.listen.live(config);
     this.isListening = true;
+    this.bargeInDetected = false;
+    this.currentTranscript = '';
+    this.interimTranscript = '';
 
     this.connection.on('open', () => {
-      console.log('STT connection opened');
+      console.log('STT connection opened with config:', config);
       this.emit('ready');
     });
 
     this.connection.on('Results', (data) => {
       if (data.channel?.alternatives?.[0]) {
         const transcript = data.channel.alternatives[0].transcript.trim();
+        const confidence = data.channel.alternatives[0].confidence;
         
         if (transcript) {
           this.lastSpeechTime = Date.now();
           
           if (data.is_final) {
+            this.currentTranscript = transcript;
+            this.interimTranscript = '';
+            
             this.emit('transcript', {
               text: transcript,
               isFinal: true,
-              confidence: data.channel.alternatives[0].confidence
+              confidence,
+              timestamp: Date.now()
             });
+            
+            // Reset barge-in detection after final transcript
+            this.bargeInDetected = false;
             this.resetSilenceTimeout();
           } else {
+            this.interimTranscript = transcript;
+            
             this.emit('transcript', {
               text: transcript,
               isFinal: false,
-              confidence: data.channel.alternatives[0].confidence
+              confidence,
+              timestamp: Date.now()
             });
           }
         }
       }
     });
 
-    this.connection.on('SpeechStarted', () => {
-      this.emit('speechStarted');
+    this.connection.on('SpeechStarted', (data) => {
+      console.log('Speech started detected');
+      this.emit('speechStarted', { timestamp: Date.now() });
       this.clearSilenceTimeout();
+      
+      // Detect potential barge-in during TTS playback
+      this.bargeInDetected = true;
+      this.emit('bargeIn', { timestamp: Date.now() });
     });
 
-    this.connection.on('UtteranceEnd', () => {
-      this.emit('speechEnded');
+    this.connection.on('UtteranceEnd', (data) => {
+      console.log('Speech ended detected');
+      this.emit('speechEnded', { 
+        timestamp: Date.now(),
+        finalTranscript: this.currentTranscript 
+      });
       this.resetSilenceTimeout();
     });
 
     this.connection.on('error', (error) => {
       console.error('STT Error:', error);
       this.emit('error', error);
+      
+      // Attempt reconnection on certain errors
+      if (this.shouldReconnect(error)) {
+        setTimeout(() => this.reconnect(), 1000);
+      }
     });
 
-    this.connection.on('close', () => {
+    this.connection.on('close', (data) => {
+      console.log('STT connection closed:', data);
       this.isListening = false;
-      this.emit('closed');
+      this.emit('closed', data);
     });
 
     return this.connection;
+  }
+
+  // Check if we should attempt reconnection
+  shouldReconnect(error) {
+    const reconnectableErrors = [
+      'WebSocket connection closed',
+      'Connection timeout',
+      'Network error'
+    ];
+    
+    return reconnectableErrors.some(errorType => 
+      error.message && error.message.includes(errorType)
+    );
+  }
+
+  // Reconnect to Deepgram
+  async reconnect() {
+    if (this.isListening) return;
+    
+    console.log('Attempting STT reconnection...');
+    try {
+      await new Promise(resolve => setTimeout(resolve, 500)); // Brief delay
+      this.startListening();
+    } catch (error) {
+      console.error('STT reconnection failed:', error);
+      this.emit('reconnectFailed', error);
+    }
   }
 
   sendAudio(audioData) {
@@ -104,10 +165,30 @@ class STTService extends EventEmitter {
 
   stopListening() {
     if (this.connection && this.isListening) {
+      console.log('Stopping STT listening');
       this.connection.finish();
       this.clearSilenceTimeout();
       this.isListening = false;
+      this.bargeInDetected = false;
+      this.currentTranscript = '';
+      this.interimTranscript = '';
     }
+  }
+
+  // Get current transcription state
+  getTranscriptionState() {
+    return {
+      isListening: this.isListening,
+      currentTranscript: this.currentTranscript,
+      interimTranscript: this.interimTranscript,
+      bargeInDetected: this.bargeInDetected,
+      lastSpeechTime: this.lastSpeechTime
+    };
+  }
+
+  // Reset barge-in detection (called when TTS starts playing)
+  resetBargeInDetection() {
+    this.bargeInDetected = false;
   }
 
   // Legacy method for backward compatibility
