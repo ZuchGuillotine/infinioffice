@@ -24,8 +24,8 @@ wss.on('connection', (ws) => {
       const transcription = await getTranscription(stream);
       const currentState = bookingService.send({ type: 'HEAR_SPEECH', speech: transcription });
       const completion = await getCompletion(currentState.value);
-      const speech = await getSpeech(completion);
-      ws.send(JSON.stringify({ event: 'media', stream: speech }));
+      const speechStream = await getSpeech(completion);
+      speechStream.pipe(ws, { end: false });
     }
   });
 

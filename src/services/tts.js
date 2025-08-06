@@ -1,20 +1,17 @@
 
-const { PollyClient, SynthesizeSpeechCommand } = require('@aws-sdk/client-polly');
+const { createClient } = require('@deepgram/sdk');
 
 const getSpeech = async (text) => {
-  const pollyClient = new PollyClient({ region: process.env.AWS_REGION });
-  const params = {
-    OutputFormat: 'pcm',
-    SampleRate: '8000',
-    Text: text,
-    TextType: 'ssml',
-    VoiceId: 'Joanna',
-    Engine: 'neural',
-  };
-
-  const command = new SynthesizeSpeechCommand(params);
-  const response = await pollyClient.send(command);
-  return response.AudioStream;
+  const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
+  const response = await deepgram.speak.request(
+    { text },
+    {
+      model: 'aura-asteria-en',
+      encoding: 'mulaw',
+      sample_rate: 8000,
+    }
+  );
+  return response.getStream();
 };
 
 module.exports = {
