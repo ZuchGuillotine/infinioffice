@@ -40,7 +40,7 @@ class STTService extends EventEmitter {
     if (this.isListening) return;
 
     const config = {
-      model: 'nova-3-phonecall',
+      model: 'nova-2-phonecall',
       language: 'en-US',
       punctuate: true,
       smart_format: true,
@@ -99,66 +99,88 @@ class STTService extends EventEmitter {
       }
     }, 3000);
 
-    // Unified handler to process transcript events regardless of SDK version / event name casing
+    // Unified handler to process transcript events for Deepgram v4 SDK
     const handleTranscriptEvent = (data) => {
       if (!data) return;
-      // Some SDKs wrap the payload under .channel.alternatives; others under .alternatives
-      const alt = data.channel?.alternatives?.[0] || data.alternatives?.[0];
-      if (!alt) return;
-      const transcript = (alt.transcript || '').trim();
-      const confidence = alt.confidence;
+      
+      console.log('STT: Received transcript event:', {
+        type: data.type,
+        is_final: data.is_final,
+        speech_final: data.speech_final,
+        hasChannel: !!data.channel,
+        hasAlternatives: !!(data.channel && data.channel.alternatives)
+      });
+      
+      // Handle v4 SDK Results events
+      if (data.type === 'Results' && data.channel && data.channel.alternatives) {
+        const alt = data.channel.alternatives[0];
+        if (!alt) return;
+        
+        const transcript = (alt.transcript || '').trim();
+        const confidence = alt.confidence || 0;
 
-      if (!transcript) return;
-
-      this.lastSpeechTime = Date.now();
-
-      // Deepgram may mark final transcripts with is_final or speech_final depending on version
-      const isFinal = data.is_final || data.speech_final || data.speech_final === true;
-
-      if (isFinal) {
-        this.currentTranscript = transcript;
-        this.interimTranscript = '';
-
-        this.emit('transcript', {
-          text: transcript,
-          isFinal: true,
+        console.log('STT: Processing transcript:', {
+          transcript,
           confidence,
-          timestamp: Date.now(),
+          is_final: data.is_final,
+          speech_final: data.speech_final
         });
 
-        // Reset barge-in detection after a final transcript
-        this.bargeInDetected = false;
-        this.resetSilenceTimeout();
-      } else {
-        this.interimTranscript = transcript;
+        // Only emit if there's actual transcript content
+        if (transcript) {
+          this.lastSpeechTime = Date.now();
 
-        this.emit('transcript', {
-          text: transcript,
-          isFinal: false,
-          confidence,
-          timestamp: Date.now(),
-        });
+          // Deepgram v4 uses is_final and speech_final
+          const isFinal = data.is_final === true;
+          const isSpeechFinal = data.speech_final === true;
+
+          if (isFinal || isSpeechFinal) {
+            this.currentTranscript = transcript;
+            this.interimTranscript = '';
+
+            console.log('STT: Emitting final transcript:', transcript);
+
+            this.emit('transcript', {
+              text: transcript,
+              isFinal: true,
+              confidence,
+              timestamp: Date.now(),
+            });
+
+            // Reset barge-in detection after a final transcript
+            this.bargeInDetected = false;
+            this.resetSilenceTimeout();
+            
+            // Emit speech ended event for speech_final
+            if (isSpeechFinal) {
+              console.log('STT: Speech final detected, emitting speechEnded');
+              this.emit('speechEnded', { 
+                timestamp: Date.now(),
+                finalTranscript: this.currentTranscript 
+              });
+            }
+          } else {
+            this.interimTranscript = transcript;
+
+            console.log('STT: Emitting interim transcript:', transcript);
+
+            this.emit('transcript', {
+              text: transcript,
+              isFinal: false,
+              confidence,
+              timestamp: Date.now(),
+            });
+          }
+        }
       }
     };
 
-    // Listen for all commonly-used transcript event names that different
-    // Deepgram SDK versions may emit. This makes the service resilient to
-    // future SDK upgrades or downgrades.
-    const transcriptEventNames = [
-      LiveTranscriptionEvents.Transcript, // v4 constant
-      'Transcript',                      // plain string variant
-      'Results',                         // raw WebSocket payload type
-      'results',                         // lowercase variant
-      'transcriptReceived',              // v2/v3 SDK alias
-      'transcript',                      // generic fallback
-    ];
+    // Listen for the specific events that Deepgram v4 SDK emits
+    this.connection.on('Results', handleTranscriptEvent);
 
-    transcriptEventNames.forEach((evt) => {
-      this.connection.on(evt, handleTranscriptEvent);
-    });
-
+    // Handle VAD events for Deepgram v4 SDK
     this.connection.on('SpeechStarted', (data) => {
-      console.log('Speech started detected');
+      console.log('STT: Speech started detected');
       this.emit('speechStarted', { timestamp: Date.now() });
       this.clearSilenceTimeout();
       
@@ -168,7 +190,7 @@ class STTService extends EventEmitter {
     });
 
     this.connection.on('UtteranceEnd', (data) => {
-      console.log('Speech ended detected');
+      console.log('STT: Speech ended detected');
       this.emit('speechEnded', { 
         timestamp: Date.now(),
         finalTranscript: this.currentTranscript 
@@ -295,10 +317,10 @@ class STTService extends EventEmitter {
   async getTranscription(audioBuffer) {
     try {
       // For Deepgram SDK v4, we need to use the correct API
-      const response = await this.deepgram.listen.prerecorded.transcribeBuffer(
+      const response = await this.deepgram.listen.prerecorded.transcribeFile(
         audioBuffer,
         {
-          model: 'nova-3-phonecall',
+          model: 'nova-2-phonecall',
           language: 'en-US',
           punctuate: true,
           smart_format: true,
@@ -315,5 +337,8 @@ class STTService extends EventEmitter {
 
 module.exports = {
   STTService,
-  getTranscription: new STTService().getTranscription.bind(new STTService()),
+  getTranscription: async (audioBuffer) => {
+    const sttService = new STTService();
+    return await sttService.getTranscription(audioBuffer);
+  },
 };

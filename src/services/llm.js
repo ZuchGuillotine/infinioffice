@@ -1,8 +1,15 @@
 const OpenAI = require('openai');
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Create OpenAI client lazily to avoid module-level instantiation
+let openai = null;
+const getOpenAIClient = () => {
+  if (!openai) {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  }
+  return openai;
+};
 
 // Enhanced intent detection system
 const detectIntent = async (transcript, conversationContext = {}) => {
@@ -34,7 +41,7 @@ Intent definitions:
 Be strict with confidence scores. Only use >0.7 for very clear intents.`;
 
   try {
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAIClient().chat.completions.create({
       model: 'gpt-4o',
       messages: [
         { role: 'system', content: systemPrompt },
@@ -106,7 +113,7 @@ const generateResponse = async (state, context, retryCount = 0) => {
 
 // Legacy function for backward compatibility
 const getCompletion = async (prompt) => {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAIClient().chat.completions.create({
     model: 'gpt-4o',
     messages: [{ role: 'system', content: 'You are a scheduling agent. Be concise and directive. Goal: complete booking/reschedule/cancel with minimal words. No chit-chat. Offer at most top 2–3 options. Avoid long explanations.' }, { role: 'user', content: prompt }],
     temperature: 0.2,
