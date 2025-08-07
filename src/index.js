@@ -1,6 +1,22 @@
+require('dotenv').config();
+
 const fastify = require('fastify')({ logger: true });
-const WebSocket = require('ws');
 const { interpret } = require('xstate');
+
+// Add content type parser for Twilio webhooks
+fastify.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, function (req, body, done) {
+  try {
+    const parsed = new URLSearchParams(body);
+    const result = {};
+    for (const [key, value] of parsed) {
+      result[key] = value;
+    }
+    done(null, result);
+  } catch (err) {
+    done(err);
+  }
+});
+
 const { handleIncomingCall } = require('./services/telephony');
 const { STTService } = require('./services/stt');
 const { processMessage, sessionManager, getCompletion } = require('./services/llm');
@@ -9,86 +25,116 @@ const { bookingMachine } = require('./services/stateMachine');
 const { createCall, createTurn, updateTurn, updateCall } = require('./services/db');
 const { performanceMonitor } = require('./services/performance');
 
+// Register WebSocket support
+fastify.register(require('@fastify/websocket'));
+
 fastify.post('/voice', handleIncomingCall);
 
-const wss = new WebSocket.Server({ server: fastify.server });
+// WebSocket endpoint for Twilio Media Streams
+fastify.register(async function (fastify) {
+  fastify.get('/', { websocket: true }, (connection, req) => {
+    const ws = connection.socket;
+    console.log('Client connected - initializing enhanced booking service');
 
-wss.on('connection', (ws) => {
-  console.log('Client connected - initializing enhanced booking service');
+    // Initialize services
+    const bookingService = interpret(bookingMachine);
+    const sttService = new STTService();
+    const ttsService = new TTSService();
+    
+    // Connection state
+    let callId = null;
+    let turnIndex = 0;
+    let streamSid = null;
+    let isProcessingTurn = false;
+    let conversationTimeout = null;
+    let silenceTimeout = null;
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    console.log('Session initialized:', sessionId);
 
-  // Initialize services
-  const bookingService = interpret(bookingMachine).start();
-  const sttService = new STTService();
-  const ttsService = new TTSService();
-  
-  // Connection state
-  let callId = null;
-  let turnIndex = 0;
-  let streamSid = null;
-  let isProcessingTurn = false;
-  let conversationTimeout = null;
-  let silenceTimeout = null;
-  const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
-  console.log('Session initialized:', sessionId);
+    // Start the booking service
+    bookingService.start();
 
-  // Start STT listening immediately
-  sttService.startListening();
+    // Log state transitions for debugging using XState v5 subscribe method
+    bookingService.subscribe((state) => {
+      console.log('State transition:', {
+        value: state.value,
+        context: {
+          service: state.context.service,
+          preferredTime: state.context.preferredTime,
+          contact: state.context.contact
+        }
+      });
 
-  // Handle STT events
-  sttService.on('ready', () => {
-    console.log('STT service ready, sending initial greeting');
-    sendInitialGreeting();
-  });
-
-  sttService.on('transcript', async (data) => {
-    if (data.isFinal && !isProcessingTurn && data.text.trim().length > 0) {
-      console.log(`Final transcript: "${data.text}" (confidence: ${data.confidence})`);
-      await processTurn(data.text, data.confidence);
-    } else if (!data.isFinal && data.text.trim().length > 0) {
-      console.log(`Interim transcript: "${data.text}"`);
-      // Reset conversation timeout on any speech activity
-      resetConversationTimeout();
-    }
-  });
-
-  sttService.on('bargeIn', () => {
-    console.log('Barge-in detected - interrupting TTS');
-    ttsService.interruptStream();
-    resetConversationTimeout();
-  });
-
-  sttService.on('speechStarted', () => {
-    console.log('Speech started');
-    clearSilenceTimeout();
-  });
-
-  sttService.on('speechEnded', () => {
-    console.log('Speech ended');
-    resetSilenceTimeout();
-  });
-
-  sttService.on('silence', () => {
-    console.log('Silence detected');
-    // Handle prolonged silence
-    if (!isProcessingTurn) {
-      handleSilence();
-    }
-  });
-
-  sttService.on('error', (error) => {
-    console.error('STT Service error:', error);
-    // Attempt to restart STT on error
-    setTimeout(() => {
-      if (!sttService.isListening) {
-        console.log('Attempting to restart STT service');
-        sttService.startListening();
+      // Log state transitions to database if call is active
+      if (callId) {
+        updateCall(callId, {
+          currentState: state.value,
+          context: state.context,
+          lastTransition: new Date()
+        }).catch(error => {
+          console.error('Failed to log state transition to database:', error);
+        });
       }
-    }, 1000);
-  });
+    });
 
-  // Send initial greeting
-  const sendInitialGreeting = async () => {
+    // Start STT listening immediately
+    sttService.startListening();
+
+    // Handle STT events
+    sttService.on('ready', () => {
+      console.log('STT service ready, sending initial greeting');
+      sendInitialGreeting();
+    });
+
+    sttService.on('transcript', async (data) => {
+      if (data.isFinal && !isProcessingTurn && data.text.trim().length > 0) {
+        console.log(`Final transcript: "${data.text}" (confidence: ${data.confidence})`);
+        await processTurn(data.text, data.confidence);
+      } else if (!data.isFinal && data.text.trim().length > 0) {
+        console.log(`Interim transcript: "${data.text}"`);
+        // Reset conversation timeout on any speech activity
+        resetConversationTimeout();
+      }
+    });
+
+    sttService.on('bargeIn', () => {
+      console.log('Barge-in detected - interrupting TTS');
+      ttsService.interruptStream();
+      resetConversationTimeout();
+    });
+
+    sttService.on('speechStarted', () => {
+      console.log('Speech started');
+      clearSilenceTimeout();
+    });
+
+    sttService.on('speechEnded', () => {
+      console.log('Speech ended');
+      resetSilenceTimeout();
+    });
+
+    sttService.on('silence', () => {
+      console.log('Silence detected');
+      // Handle prolonged silence
+      if (!isProcessingTurn) {
+        handleSilence();
+      }
+    });
+
+    sttService.on('error', (error) => {
+      console.error('STT Service error:', error);
+      // Attempt to restart STT on error
+      setTimeout(() => {
+        if (!sttService.isListening) {
+          console.log('Attempting to restart STT service');
+          sttService.startListening();
+        }
+      }, 1000);
+    });
+
+    // Send initial greeting
+    const sendInitialGreeting = async () => {
     try {
       const initialGreeting = "Hello! I'm here to help you schedule an appointment. How can I assist you today?";
       
@@ -321,32 +367,8 @@ wss.on('connection', (ws) => {
     }
   };
 
-  // Log state transitions for debugging
-  bookingService.onTransition((state) => {
-    console.log('State transition:', {
-      value: state.value,
-      context: {
-        service: state.context.service,
-        preferredTime: state.context.preferredTime,
-        contact: state.context.contact
-      },
-      changed: state.changed
-    });
-
-    // Log state transitions to database if call is active
-    if (callId && state.changed) {
-      updateCall(callId, {
-        currentState: state.value,
-        context: state.context,
-        lastTransition: new Date()
-      }).catch(error => {
-        console.error('Failed to log state transition to database:', error);
-      });
-    }
-  });
-
-  // Handle Twilio WebSocket messages
-  ws.on('message', async (message) => {
+    // Handle Twilio WebSocket messages
+    ws.on('message', async (message) => {
     try {
       const data = JSON.parse(message);
 
@@ -385,7 +407,10 @@ wss.on('connection', (ws) => {
         // Stream audio data to STT service
         if (data.media && data.media.payload) {
           const audioBuffer = Buffer.from(data.media.payload, 'base64');
+          console.log(`Received audio chunk: ${audioBuffer.length} bytes`);
           sttService.sendAudio(audioBuffer);
+        } else {
+          console.log('Received media event without payload');
         }
         
       } else if (data.event === 'stop') {
@@ -409,7 +434,7 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => {
+    ws.on('close', () => {
     console.log('WebSocket client disconnected');
     
     // Clean up services
@@ -436,7 +461,7 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('error', (error) => {
+    ws.on('error', (error) => {
     console.error('WebSocket error:', error);
     
     // Clean up services
@@ -460,9 +485,11 @@ wss.on('connection', (ws) => {
       });
     }
   });
+  });
 });
 
-fastify.get('/', async (request, reply) => {
+// Default HTTP route
+fastify.get('/hello', async (request, reply) => {
   return { hello: 'world' };
 });
 

@@ -19,7 +19,7 @@ class STTService extends EventEmitter {
     if (this.isListening) return;
 
     const config = {
-      model: 'nova-2-phonecall',
+      model: 'nova-3-phonecall',
       language: 'en-US',
       punctuate: true,
       smart_format: true,
@@ -145,7 +145,10 @@ class STTService extends EventEmitter {
 
   sendAudio(audioData) {
     if (this.connection && this.isListening) {
+      console.log(`STT: Sending ${audioData.length} bytes to Deepgram`);
       this.connection.send(audioData);
+    } else {
+      console.log(`STT: Cannot send audio - connection: ${!!this.connection}, listening: ${this.isListening}`);
     }
   }
 
@@ -194,10 +197,11 @@ class STTService extends EventEmitter {
   // Legacy method for backward compatibility
   async getTranscription(audioBuffer) {
     try {
+      // For Deepgram SDK v4, we need to use the correct API
       const response = await this.deepgram.listen.prerecorded.transcribeBuffer(
         audioBuffer,
         {
-          model: 'nova-2-phonecall',
+          model: 'nova-3-phonecall',
           language: 'en-US',
           punctuate: true,
           smart_format: true,

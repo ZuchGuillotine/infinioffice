@@ -9,7 +9,7 @@ const handleIncomingCall = (req, res) => {
   // The greeting will be handled via Deepgram TTS through the WebSocket
   const connect = voiceResponse.connect();
   connect.stream({
-    url: `wss://${req.headers.host}/`,
+    url: `wss://${req.headers.host}`,
   });
 
   res.type('text/xml');
