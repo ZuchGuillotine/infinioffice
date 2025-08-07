@@ -5,6 +5,14 @@ const EventEmitter = require('events');
 class STTService extends EventEmitter {
   constructor() {
     super();
+    
+    if (!process.env.DEEPGRAM_API_KEY) {
+      throw new Error('DEEPGRAM_API_KEY environment variable is required');
+    }
+    
+    console.log('Initializing Deepgram client with API key:', 
+      process.env.DEEPGRAM_API_KEY ? 'PRESENT' : 'MISSING');
+    
     this.deepgram = createClient(process.env.DEEPGRAM_API_KEY);
     this.connection = null;
     this.isListening = false;
@@ -19,18 +27,21 @@ class STTService extends EventEmitter {
     if (this.isListening) return;
 
     const config = {
-      model: 'nova-3-phonecall',
+      model: 'nova-2-phonecall',
       language: 'en-US',
       punctuate: true,
       smart_format: true,
       interim_results: true,
-      vad_events: true,
-      endpointing: 300,
+      encoding: 'mulaw',
+      sample_rate: 8000,
+      channels: 1,
       diarize: false,
       filler_words: false,
+      vad_events: true,
       ...options
     };
 
+    console.log('Attempting to connect to Deepgram with config:', config);
     this.connection = this.deepgram.listen.live(config);
     this.isListening = true;
     this.bargeInDetected = false;
@@ -38,8 +49,12 @@ class STTService extends EventEmitter {
     this.interimTranscript = '';
 
     this.connection.on('open', () => {
-      console.log('STT connection opened with config:', config);
+      console.log('STT connection opened successfully with config:', config);
       this.emit('ready');
+    });
+
+    this.connection.on('connecting', () => {
+      console.log('STT connecting to Deepgram...');
     });
 
     this.connection.on('Results', (data) => {
@@ -98,12 +113,20 @@ class STTService extends EventEmitter {
     });
 
     this.connection.on('error', (error) => {
-      console.error('STT Error:', error);
+      console.error('STT Error details:', {
+        message: error.message,
+        code: error.code,
+        statusCode: error.statusCode,
+        response: error.response,
+        stack: error.stack
+      });
+      this.isListening = false;
       this.emit('error', error);
       
       // Attempt reconnection on certain errors
       if (this.shouldReconnect(error)) {
-        setTimeout(() => this.reconnect(), 1000);
+        console.log('Scheduling STT reconnection...');
+        setTimeout(() => this.reconnect(), 2000);
       }
     });
 

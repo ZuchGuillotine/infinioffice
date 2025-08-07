@@ -33,7 +33,7 @@ fastify.post('/voice', handleIncomingCall);
 // WebSocket endpoint for Twilio Media Streams
 fastify.register(async function (fastify) {
   fastify.get('/', { websocket: true }, (connection, req) => {
-    const ws = connection.socket;
+    const ws = connection;
     console.log('Client connected - initializing enhanced booking service');
 
     // Initialize services
@@ -78,8 +78,7 @@ fastify.register(async function (fastify) {
       }
     });
 
-    // Start STT listening immediately
-    sttService.startListening();
+    // STT will be started when Twilio stream begins
 
     // Handle STT events
     sttService.on('ready', () => {
@@ -396,12 +395,16 @@ fastify.register(async function (fastify) {
           }
         }
 
-        // Delay initial greeting slightly to allow connection to stabilize
+        // Start STT listening now that we have the Twilio stream
+        console.log('Starting STT service for Twilio stream');
+        sttService.startListening();
+
+        // Delay initial greeting slightly to allow STT connection to stabilize
         setTimeout(() => {
           if (sttService.isListening) {
             sendInitialGreeting();
           }
-        }, 500);
+        }, 1000);
         
       } else if (data.event === 'media') {
         // Stream audio data to STT service
