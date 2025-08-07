@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const fastify = require('fastify')({ logger: true });
+const WebSocket = require('ws');
 const { interpret } = require('xstate');
 
 // Add content type parser for Twilio webhooks
@@ -25,9 +26,20 @@ const { bookingMachine } = require('./services/stateMachine');
 const { createCall, createTurn, updateTurn, updateCall } = require('./services/db');
 const { performanceMonitor } = require('./services/performance');
 
+// Import route modules
+const authRoutes = require('./routes/auth');
+const organizationRoutes = require('./routes/organizations');
+const callRoutes = require('./routes/calls');
+
 // Register WebSocket support
 fastify.register(require('@fastify/websocket'));
 
+// Register API routes
+fastify.register(authRoutes, { prefix: '/api/auth' });
+fastify.register(organizationRoutes, { prefix: '/api/organizations' });
+fastify.register(callRoutes, { prefix: '/api/calls' });
+
+// Voice webhook endpoint
 fastify.post('/voice', handleIncomingCall);
 
 // WebSocket endpoint for Twilio Media Streams
@@ -79,11 +91,18 @@ fastify.register(async function (fastify) {
     });
 
     // STT will be started when Twilio stream begins
+    let sttReady = false;
+    let streamStarted = false;
 
     // Handle STT events
     sttService.on('ready', () => {
-      console.log('STT service ready, sending initial greeting');
-      sendInitialGreeting();
+      console.log('STT service ready');
+      sttReady = true;
+      // Only send greeting if both STT is ready and stream has started
+      if (streamStarted && sttReady) {
+        console.log('Both STT ready and stream started - sending initial greeting');
+        setTimeout(sendInitialGreeting, 500); // Small delay to ensure connection stability
+      }
     });
 
     sttService.on('transcript', async (data) => {
@@ -198,7 +217,7 @@ fastify.register(async function (fastify) {
 
       // Step 3: Generate and stream TTS
       const ttsStartTime = Date.now();
-      const ttsResult = await ttsService.generateAndStream(responseText, ws, { streamId });
+      const ttsResult = await ttsService.generateAndStream(responseText, ws, { streamId: streamSid });
       const ttsMs = Date.now() - ttsStartTime;
 
       // Record TTS performance
@@ -260,7 +279,7 @@ fastify.register(async function (fastify) {
   const handleSilence = async () => {
     try {
       const timeoutResponse = "I'm still here. Are you ready to schedule an appointment?";
-      await ttsService.generateAndStream(timeoutResponse, ws, { streamId });
+      await ttsService.generateAndStream(timeoutResponse, ws, { streamId: streamSid });
       resetConversationTimeout();
     } catch (error) {
       console.error('Error handling silence:', error);
@@ -271,7 +290,7 @@ fastify.register(async function (fastify) {
   const handleProcessingError = async (error) => {
     try {
       const errorResponse = "I'm sorry, I'm experiencing technical difficulties. Could you please repeat that?";
-      await ttsService.generateAndStream(errorResponse, ws, { streamId });
+      await ttsService.generateAndStream(errorResponse, ws, { streamId: streamSid });
       
       if (callId) {
         await updateCall(callId, {
@@ -346,7 +365,7 @@ fastify.register(async function (fastify) {
     try {
       console.log('Conversation timeout reached');
       const timeoutMessage = "I haven't heard from you in a while. If you'd like to schedule an appointment, please call back. Have a great day!";
-      await ttsService.generateAndStream(timeoutMessage, ws, { streamId });
+      await ttsService.generateAndStream(timeoutMessage, ws, { streamId: streamSid });
       
       if (callId) {
         await updateCall(callId, {
@@ -397,14 +416,14 @@ fastify.register(async function (fastify) {
 
         // Start STT listening now that we have the Twilio stream
         console.log('Starting STT service for Twilio stream');
+        streamStarted = true;
         sttService.startListening();
 
-        // Delay initial greeting slightly to allow STT connection to stabilize
-        setTimeout(() => {
-          if (sttService.isListening) {
-            sendInitialGreeting();
-          }
-        }, 1000);
+        // Send greeting once both stream is started and STT is ready
+        if (sttReady && streamStarted) {
+          console.log('Stream started and STT already ready - sending initial greeting');
+          setTimeout(sendInitialGreeting, 500); // Small delay to ensure connection stability
+        }
         
       } else if (data.event === 'media') {
         // Stream audio data to STT service

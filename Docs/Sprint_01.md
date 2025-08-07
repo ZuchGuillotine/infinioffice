@@ -12,14 +12,25 @@
 - **Database Integration**: Full call/turn tracking with performance metrics
 - **Deployment Ready**: Complete documentation and deployment guides
 
-### **January 2025 Update - WebSocket Connection Issue Resolved** ✅
-**Fixed Critical Issues**:
-- **WebSocket Connection**: Resolved Deepgram 400 error by fixing service initialization order 
-- **STT Pipeline**: Now successfully receiving and processing audio from Twilio streams
-- **TTS Pipeline**: Character processing confirmed in Deepgram logs
-- **Connection Stability**: Persistent WebSocket connections established
+### **January 2025 Update - Major WebSocket Resolution & Pipeline Progress** ✅
+**CRITICAL WEBSOCKET FIX COMPLETED**:
+- **Root Cause**: Model name `nova-3-phonecall` doesn't exist - corrected to `nova-3`
+- **Connection Issue**: STT service `open` event wasn't firing - implemented fallback trigger on first audio send
+- **Service Timing**: Fixed initialization order - STT now starts only after Twilio stream begins
+- **Connection Stability**: Persistent WebSocket connections now established with Nova-3 model
 
-**Current Status**: Core pipeline connected, troubleshooting voice output and LLM integration
+**CURRENT PIPELINE STATUS**:
+✅ **Welcome Script**: Application now successfully reads welcome message on call connect  
+✅ **STT Connection**: Deepgram Nova-3 receiving and processing audio from Twilio streams  
+✅ **TTS Service**: Fixed for Deepgram SDK v4+ ReadableStream API compatibility  
+✅ **WebSocket Stability**: No more 400 errors, connections persist throughout call duration
+
+**REMAINING ISSUES TO RESOLVE**:
+❌ **VAD (Voice Activity Detection)**: Temporarily disabled during troubleshooting - needs re-enablement  
+❌ **LLM Integration**: OpenAI API not being hit after welcome script - blocking conversation flow  
+❌ **Response Pipeline**: No agent responses after welcome message and attempted user speech  
+
+**Next Steps**: Fix LLM pipeline integration and re-enable VAD for complete voice interaction
 
 ### **Ready for Next Phase**: Complete voice pipeline integration and Calendar Integration (Week 5-6)
 

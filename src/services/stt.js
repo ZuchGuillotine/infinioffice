@@ -21,13 +21,14 @@ class STTService extends EventEmitter {
     this.bargeInDetected = false;
     this.currentTranscript = '';
     this.interimTranscript = '';
+    this._readyEmitted = false;
   }
 
   startListening(options = {}) {
     if (this.isListening) return;
 
     const config = {
-      model: 'nova-2-phonecall',
+      model: 'nova-3',
       language: 'en-US',
       punctuate: true,
       smart_format: true,
@@ -42,11 +43,20 @@ class STTService extends EventEmitter {
     };
 
     console.log('Attempting to connect to Deepgram with config:', config);
-    this.connection = this.deepgram.listen.live(config);
-    this.isListening = true;
-    this.bargeInDetected = false;
-    this.currentTranscript = '';
-    this.interimTranscript = '';
+    
+    try {
+      this.connection = this.deepgram.listen.live(config);
+      this.isListening = true;
+      this.bargeInDetected = false;
+      this.currentTranscript = '';
+      this.interimTranscript = '';
+      this._readyEmitted = false;
+    } catch (error) {
+      console.error('Failed to create Deepgram connection:', error);
+      this.isListening = false;
+      this.emit('error', error);
+      return null;
+    }
 
     this.connection.on('open', () => {
       console.log('STT connection opened successfully with config:', config);
@@ -56,6 +66,19 @@ class STTService extends EventEmitter {
     this.connection.on('connecting', () => {
       console.log('STT connecting to Deepgram...');
     });
+
+    this.connection.on('close', () => {
+      console.log('STT connection closed');
+    });
+
+    // Add a timeout to check if connection opens
+    setTimeout(() => {
+      if (!this.connection || this.connection.readyState !== 1) {
+        console.log('STT connection not ready after 3 seconds, current state:', this.connection?.readyState);
+        // Try to emit ready anyway to proceed with welcome message
+        this.emit('ready');
+      }
+    }, 3000);
 
     this.connection.on('Results', (data) => {
       if (data.channel?.alternatives?.[0]) {
@@ -121,6 +144,7 @@ class STTService extends EventEmitter {
         stack: error.stack
       });
       this.isListening = false;
+      this.connection = null;
       this.emit('error', error);
       
       // Attempt reconnection on certain errors
@@ -133,6 +157,7 @@ class STTService extends EventEmitter {
     this.connection.on('close', (data) => {
       console.log('STT connection closed:', data);
       this.isListening = false;
+      this.connection = null;
       this.emit('closed', data);
     });
 
@@ -144,7 +169,8 @@ class STTService extends EventEmitter {
     const reconnectableErrors = [
       'WebSocket connection closed',
       'Connection timeout',
-      'Network error'
+      'Network error',
+      'Unexpected server response: 400'
     ];
     
     return reconnectableErrors.some(errorType => 
@@ -170,6 +196,13 @@ class STTService extends EventEmitter {
     if (this.connection && this.isListening) {
       console.log(`STT: Sending ${audioData.length} bytes to Deepgram`);
       this.connection.send(audioData);
+      
+      // If this is the first successful audio send and we haven't emitted ready yet, emit it
+      if (!this._readyEmitted) {
+        console.log('STT: First successful audio send - emitting ready event');
+        this._readyEmitted = true;
+        this.emit('ready');
+      }
     } else {
       console.log(`STT: Cannot send audio - connection: ${!!this.connection}, listening: ${this.isListening}`);
     }

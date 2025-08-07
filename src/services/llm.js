@@ -35,7 +35,7 @@ Be strict with confidence scores. Only use >0.7 for very clear intents.`;
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo-0125',
+      model: 'gpt-4o',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: transcript }
@@ -106,7 +106,7 @@ const generateResponse = async (state, context, retryCount = 0) => {
 // Legacy function for backward compatibility
 const getCompletion = async (prompt) => {
   const response = await openai.chat.completions.create({
-    model: 'gpt-3.5-turbo-0125',
+    model: 'gpt-4o',
     messages: [{ role: 'system', content: 'You are a scheduling agent. Be concise and directive. Goal: complete booking/reschedule/cancel with minimal words. No chit-chat. Offer at most top 2–3 options. Avoid long explanations.' }, { role: 'user', content: prompt }],
     temperature: 0.2,
     max_tokens: 120,
@@ -280,7 +280,7 @@ const mapIntentToStateKey = (intent, currentState) => {
     'service_provided': 'timeWindow', 
     'time_provided': 'contact',
     'contact_provided': 'confirmation',
-    'confirmation_yes': 'booking_success',
+    'confirmation_yes': 'success',
     'confirmation_no': 'service',
     'unclear': 'clarification',
     'timeout': currentState === 'greeting' ? 'general_timeout' : 'timeout'

@@ -28,25 +28,107 @@ class TTSService extends EventEmitter {
         config
       );
 
-      const stream = response.getStream();
-      if (!stream) {
-        throw new Error('Failed to get audio stream from Deepgram TTS');
+      // Extract audio buffer from the response
+      if (!response) {
+        throw new Error('Failed to get response from Deepgram TTS');
+      }
+
+      let audioBuffer;
+      let usedMethod;
+      
+      // For newer Deepgram SDK v4+, the response should have a getStream() method
+      if (response.getStream && typeof response.getStream === 'function') {
+        // Method 1: Use getStream() method - it returns a Promise that resolves to a ReadableStream
+        try {
+          const audioStream = await response.getStream();
+          
+          // Handle Web Streams API ReadableStream
+          if (audioStream && typeof audioStream.getReader === 'function') {
+            const reader = audioStream.getReader();
+            const chunks = [];
+            
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunks.push(value);
+            }
+            
+            audioBuffer = Buffer.concat(chunks);
+            usedMethod = 'getStream() ReadableStream';
+          } else {
+            throw new Error('Stream is not a ReadableStream');
+          }
+        } catch (streamError) {
+          console.log('getStream() failed, trying alternative method:', streamError.message);
+          // Fall through to other methods
+        }
+      }
+      
+      if (!audioBuffer && response.result && response.result instanceof ArrayBuffer) {
+        // Method 2: Handle ArrayBuffer result
+        audioBuffer = Buffer.from(response.result);
+        usedMethod = 'response.result (ArrayBuffer)';
+      } else if (!audioBuffer && response.result && response.result instanceof Uint8Array) {
+        // Method 3: Handle Uint8Array result
+        audioBuffer = Buffer.from(response.result);
+        usedMethod = 'response.result (Uint8Array)';
+      } else if (!audioBuffer && response.result && Buffer.isBuffer(response.result)) {
+        // Method 4: Handle Buffer result
+        audioBuffer = response.result;
+        usedMethod = 'response.result (Buffer)';
+      } else if (!audioBuffer && Buffer.isBuffer(response)) {
+        // Method 5: Treat response as buffer directly
+        audioBuffer = response;
+        usedMethod = 'response direct (buffer)';
+      } else if (!audioBuffer && response instanceof Uint8Array) {
+        // Method 6: Handle Uint8Array response
+        audioBuffer = Buffer.from(response);
+        usedMethod = 'response direct (Uint8Array)';
+      } else if (!audioBuffer && response instanceof ArrayBuffer) {
+        // Method 7: Handle ArrayBuffer response
+        audioBuffer = Buffer.from(response);
+        usedMethod = 'response direct (ArrayBuffer)';
+      } else if (!audioBuffer) {
+        // Log the actual response structure for debugging
+        console.error('Unexpected response structure:', {
+          responseType: typeof response,
+          responseKeys: response && typeof response === 'object' ? Object.keys(response) : 'not object',
+          hasResult: !!response.result,
+          resultType: response.result ? typeof response.result : 'none'
+        });
+        throw new Error(`Unable to extract audio data from response. Response type: ${typeof response}, keys: ${response && typeof response === 'object' ? Object.keys(response).join(', ') : 'none'}`);
+      }
+
+      if (!audioBuffer) {
+        throw new Error('Failed to get audio data from Deepgram TTS response');
       }
 
       const ttsLatency = Date.now() - startTime;
-      console.log(`TTS generation latency: ${ttsLatency}ms`);
+      console.log(`TTS generation completed using method: ${usedMethod}`);
+      console.log(`TTS generation latency: ${ttsLatency}ms, audio buffer size: ${audioBuffer.length} bytes`);
 
-      this.currentStream = stream;
+      // Convert buffer to readable stream for compatibility with existing streaming code
+      const { Readable } = require('stream');
+      const audioStream = new Readable({
+        read() {}
+      });
+      
+      // Push the entire buffer as a single chunk
+      audioStream.push(audioBuffer);
+      audioStream.push(null); // End the stream
+
+      this.currentStream = audioStream;
       this.isStreaming = true;
 
       // Emit TTS started event
       this.emit('ttsStarted', { 
         text, 
         latency: ttsLatency,
+        audioSize: audioBuffer.length,
         timestamp: Date.now()
       });
 
-      return stream;
+      return audioStream;
     } catch (error) {
       console.error('TTS Error:', error);
       this.emit('error', error);
