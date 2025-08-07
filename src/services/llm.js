@@ -42,6 +42,7 @@ Be strict with confidence scores. Only use >0.7 for very clear intents.`;
       ],
       temperature: 0.1,
       max_tokens: 200,
+      response_format: { "type": "json_object" },
     });
 
     const result = JSON.parse(response.choices[0].message.content);

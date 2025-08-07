@@ -186,15 +186,20 @@ fastify.register(async function (fastify) {
 
       // Step 1: Process message with LLM and get turn ID
       const llmStartTime = Date.now();
-      const llmResult = await processMessage(
+      /* const llmResult = await processMessage(
         transcript,
         sessionId,
         { state: bookingService.state.value },
         callId,
         turnIndex
+      ); */
+      const llmResult = await processMessage(
+        transcript,
+        sessionId,
+        { state: bookingService.state.value }
       );
       const llmMs = Date.now() - llmStartTime;
-      currentTurnId = llmResult.turnId;
+      // currentTurnId = llmResult.turnId;
 
       // Initialize performance monitoring
       if (currentTurnId) {
@@ -397,7 +402,7 @@ fastify.register(async function (fastify) {
         console.log('Twilio stream started:', { streamSid, callSid });
         
         // Initialize call tracking
-        if (callSid && !callId) {
+        /* if (callSid && !callId) {
           try {
             const call = await createCall({
               twilioCallSid: callSid,
@@ -412,7 +417,7 @@ fastify.register(async function (fastify) {
             console.error('Failed to initialize call tracking:', error);
             // Continue without database tracking
           }
-        }
+        } */
 
         // Start STT listening now that we have the Twilio stream
         console.log('Starting STT service for Twilio stream');
@@ -429,7 +434,7 @@ fastify.register(async function (fastify) {
         // Stream audio data to STT service
         if (data.media && data.media.payload) {
           const audioBuffer = Buffer.from(data.media.payload, 'base64');
-          console.log(`Received audio chunk: ${audioBuffer.length} bytes`);
+          // console.log(`Received audio chunk: ${audioBuffer.length} bytes`);
           sttService.sendAudio(audioBuffer);
         } else {
           console.log('Received media event without payload');
@@ -439,7 +444,7 @@ fastify.register(async function (fastify) {
         console.log('Twilio stream stopped');
         
         // Update call status
-        if (callId) {
+        /* if (callId) {
           try {
             await updateCall(callId, {
               status: 'disconnected',
@@ -448,7 +453,7 @@ fastify.register(async function (fastify) {
           } catch (error) {
             console.error('Failed to update call disconnect status:', error);
           }
-        }
+        } */
       }
       
     } catch (error) {
@@ -472,7 +477,7 @@ fastify.register(async function (fastify) {
     sessionManager.clearSession(sessionId);
     
     // Update call status to disconnected
-    if (callId) {
+    /* if (callId) {
       updateCall(callId, {
         status: 'disconnected',
         endedAt: new Date(),
@@ -480,7 +485,7 @@ fastify.register(async function (fastify) {
       }).catch(error => {
         console.error('Failed to update call disconnect status:', error);
       });
-    }
+    } */
   });
 
     ws.on('error', (error) => {
@@ -496,7 +501,7 @@ fastify.register(async function (fastify) {
     if (silenceTimeout) clearTimeout(silenceTimeout);
     
     // Log websocket error
-    if (callId) {
+    /* if (callId) {
       updateCall(callId, {
         status: 'error',
         error: error.message,
@@ -505,7 +510,7 @@ fastify.register(async function (fastify) {
       }).catch(dbError => {
         console.error('Failed to log websocket error:', dbError);
       });
-    }
+    } */
   });
   });
 });

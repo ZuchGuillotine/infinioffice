@@ -20,14 +20,7 @@ const createCall = async (data) => {
     return call;
   } catch (error) {
     console.error('Database error creating call:', error);
-    // Return a mock object if database fails
-    return {
-      id: `mock_${Date.now()}`,
-      twilioCallSid: data.twilioCallSid,
-      status: data.status,
-      startedAt: data.startedAt,
-      currentState: data.currentState
-    };
+    throw error;
   }
 };
 
@@ -64,14 +57,7 @@ const createTurn = async (data) => {
     return turn;
   } catch (error) {
     console.error('Database error creating turn:', error);
-    // Return a mock object if database fails
-    return {
-      id: `mock_turn_${Date.now()}`,
-      callId: data.callId,
-      userInput: data.userInput,
-      timestamp: data.timestamp,
-      stateBefore: data.stateBefore
-    };
+    throw error;
   }
 };
 

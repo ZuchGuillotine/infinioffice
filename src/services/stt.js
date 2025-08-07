@@ -1,5 +1,17 @@
+/**
+    * @description      : 
+    * @author           : 
+    * @group            : 
+    * @created          : 07/08/2025 - 03:15:31
+    * 
+    * MODIFICATION LOG
+    * - Version         : 1.0.0
+    * - Date            : 07/08/2025
+    * - Author          : 
+    * - Modification    : 
+**/
 
-const { createClient } = require('@deepgram/sdk');
+const { createClient, LiveTranscriptionEvents } = require('@deepgram/sdk');
 const EventEmitter = require('events');
 
 class STTService extends EventEmitter {
@@ -28,7 +40,7 @@ class STTService extends EventEmitter {
     if (this.isListening) return;
 
     const config = {
-      model: 'nova-3',
+      model: 'nova-3-phonecall',
       language: 'en-US',
       punctuate: true,
       smart_format: true,
@@ -63,57 +75,86 @@ class STTService extends EventEmitter {
       this.emit('ready');
     });
 
+    this.connection.on('warning', (warning) => {
+      console.warn('STT Warning:', warning);
+    });
+
     this.connection.on('connecting', () => {
       console.log('STT connecting to Deepgram...');
     });
 
-    this.connection.on('close', () => {
-      console.log('STT connection closed');
+    this.connection.on(LiveTranscriptionEvents.Close, (data) => {
+      console.log('STT Connection closed:', data);
+      this.isListening = false;
+      this.connection = null;
+      this.emit('closed', data);
     });
 
     // Add a timeout to check if connection opens
     setTimeout(() => {
-      if (!this.connection || this.connection.readyState !== 1) {
-        console.log('STT connection not ready after 3 seconds, current state:', this.connection?.readyState);
-        // Try to emit ready anyway to proceed with welcome message
+      if (!this._readyEmitted && (!this.connection || this.connection.readyState !== 1)) {
+        console.log('STT connection not ready after 3 seconds, emitting ready as a fallback.');
+        this._readyEmitted = true;
         this.emit('ready');
       }
     }, 3000);
 
-    this.connection.on('Results', (data) => {
-      if (data.channel?.alternatives?.[0]) {
-        const transcript = data.channel.alternatives[0].transcript.trim();
-        const confidence = data.channel.alternatives[0].confidence;
-        
-        if (transcript) {
-          this.lastSpeechTime = Date.now();
-          
-          if (data.is_final) {
-            this.currentTranscript = transcript;
-            this.interimTranscript = '';
-            
-            this.emit('transcript', {
-              text: transcript,
-              isFinal: true,
-              confidence,
-              timestamp: Date.now()
-            });
-            
-            // Reset barge-in detection after final transcript
-            this.bargeInDetected = false;
-            this.resetSilenceTimeout();
-          } else {
-            this.interimTranscript = transcript;
-            
-            this.emit('transcript', {
-              text: transcript,
-              isFinal: false,
-              confidence,
-              timestamp: Date.now()
-            });
-          }
-        }
+    // Unified handler to process transcript events regardless of SDK version / event name casing
+    const handleTranscriptEvent = (data) => {
+      if (!data) return;
+      // Some SDKs wrap the payload under .channel.alternatives; others under .alternatives
+      const alt = data.channel?.alternatives?.[0] || data.alternatives?.[0];
+      if (!alt) return;
+      const transcript = (alt.transcript || '').trim();
+      const confidence = alt.confidence;
+
+      if (!transcript) return;
+
+      this.lastSpeechTime = Date.now();
+
+      // Deepgram may mark final transcripts with is_final or speech_final depending on version
+      const isFinal = data.is_final || data.speech_final || data.speech_final === true;
+
+      if (isFinal) {
+        this.currentTranscript = transcript;
+        this.interimTranscript = '';
+
+        this.emit('transcript', {
+          text: transcript,
+          isFinal: true,
+          confidence,
+          timestamp: Date.now(),
+        });
+
+        // Reset barge-in detection after a final transcript
+        this.bargeInDetected = false;
+        this.resetSilenceTimeout();
+      } else {
+        this.interimTranscript = transcript;
+
+        this.emit('transcript', {
+          text: transcript,
+          isFinal: false,
+          confidence,
+          timestamp: Date.now(),
+        });
       }
+    };
+
+    // Listen for all commonly-used transcript event names that different
+    // Deepgram SDK versions may emit. This makes the service resilient to
+    // future SDK upgrades or downgrades.
+    const transcriptEventNames = [
+      LiveTranscriptionEvents.Transcript, // v4 constant
+      'Transcript',                      // plain string variant
+      'Results',                         // raw WebSocket payload type
+      'results',                         // lowercase variant
+      'transcriptReceived',              // v2/v3 SDK alias
+      'transcript',                      // generic fallback
+    ];
+
+    transcriptEventNames.forEach((evt) => {
+      this.connection.on(evt, handleTranscriptEvent);
     });
 
     this.connection.on('SpeechStarted', (data) => {
@@ -194,7 +235,7 @@ class STTService extends EventEmitter {
 
   sendAudio(audioData) {
     if (this.connection && this.isListening) {
-      console.log(`STT: Sending ${audioData.length} bytes to Deepgram`);
+      // console.log(`STT: Sending ${audioData.length} bytes to Deepgram`);
       this.connection.send(audioData);
       
       // If this is the first successful audio send and we haven't emitted ready yet, emit it

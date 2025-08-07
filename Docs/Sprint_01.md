@@ -34,6 +34,8 @@
 
 ### **Ready for Next Phase**: Complete voice pipeline integration and Calendar Integration (Week 5-6)
 
+**Developer Note (2025-08-07):** We are temporarily disabling database calls during active conversations to isolate and troubleshoot the voice pipeline. The `createCall` function was failing due to a foreign key constraint on `organizationId`, which needs to be resolved by ensuring the correct `organizationId` is seeded in the database before a call is made. All database calls in `src/index.js` related to call and turn creation/updates have been commented out until the pipeline is stable.
+
 ---
 
 ## 🎯 **MVP Definition**
