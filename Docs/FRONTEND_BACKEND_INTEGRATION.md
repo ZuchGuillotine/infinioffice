@@ -269,7 +269,11 @@ This document outlines the integration points between the React frontend and Nod
 
 ---
 
-*This document should be updated as the integration evolves. Both teams should review and approve changes.* 
+*This document should be updated as the integration evolves. Both teams should review and approve changes.*
+
+---
+
+**Last Updated**: August 2025 - Enhanced UI design requirements added 
 
 ## Recommended Updates from Frontend Scaffolding
 
@@ -310,3 +314,77 @@ The new onboarding and configuration UIs surfaced a few concrete backend contrac
     - `GET /api/auth/session` – Returns current user and organization summary.
 
 These can be stubs for pilot and incrementally wired as backend finalizes.
+
+## Additional Requirements from Enhanced UI Design (August 2025)
+
+The new enhanced frontend design introduces several additional backend requirements:
+
+### Real-time Dashboard Features
+- **WebSocket Events**:
+  - `call.started` - Live call beginning notification
+  - `call.ended` - Call completion with outcome
+  - `metrics.updated` - Real-time performance metrics
+  - `agent.status` - Agent online/offline/processing status
+  - `booking.created` - New appointment confirmation
+
+- **Enhanced API Endpoints**:
+  - `GET /api/dashboard/realtime-metrics` - Current metrics for dashboard cards
+  - `GET /api/calls/recent` - Last 10 calls with status/outcome
+  - `GET /api/bookings/today` - Today's appointments
+  - `POST /api/agent/status` - Update agent routing mode (auto/manual/offline)
+
+### Enhanced Onboarding Flow
+- **Business Profile Extension**:
+  ```javascript
+  // Add to BusinessConfig model
+  {
+    businessType: "hvac|dental|auto|beauty|other",
+    completedSteps: ["step1", "step2"], // Track onboarding progress
+    setupProgress: 80 // Percentage completion
+  }
+  ```
+
+- **Progress Tracking**:
+  - `PUT /api/organizations/onboarding-progress` - Update completion status
+  - `GET /api/organizations/setup-status` - Get current setup state
+
+### Audio/Voice Features
+- **Demo Audio**:
+  - `GET /api/tts/demo` - Generate sample AI voice for landing page
+  - `POST /api/calls/demo` - Trigger demo call to admin number
+
+### Analytics & Performance
+- **Trending Metrics**:
+  - Track day-over-day changes for dashboard trend indicators
+  - Store hourly/daily aggregations for performance charts
+  - Cost tracking per call for revenue analytics
+
+### UI Component Data Requirements
+
+1. **StatusIndicator Component**:
+   - Needs real-time latency from voice pipeline
+   - Agent status (online/processing/offline)
+   - Current call count
+
+2. **MetricCard Component**:
+   - Requires trend calculations (% change from previous period)
+   - Color coding based on thresholds
+   - Real-time updates via WebSocket
+
+3. **AudioVisualization Component**:
+   - Live audio level data during calls (optional)
+   - Call recording playback visualization
+
+### Security Considerations
+- Real-time data should be scoped to organization
+- WebSocket connections need JWT authentication
+- Rate limiting for real-time endpoints
+- Demo features should not expose sensitive data
+
+### Performance Optimizations
+- Dashboard metrics cached for 30-60 seconds
+- WebSocket connection pooling
+- Lazy loading for historical data
+- Pagination for call logs and bookings
+
+These enhancements significantly improve user engagement and provide the "futuristic" AI experience outlined in the requirements while maintaining the professional, business-focused approach needed for the target SMB market.
