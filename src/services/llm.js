@@ -28,15 +28,17 @@ const detectIntent = async (transcript, conversationContext = {}) => {
 Current conversation context: ${JSON.stringify(conversationContext)}
 
 Intent definitions:
-- booking: User wants to book an appointment
-- service_provided: User specified what service they need
-- time_provided: User specified when they want the appointment
-- contact_provided: User provided contact information
+- booking: User wants to book an appointment (e.g., "I need an appointment", "Do you have availability?", "Can I schedule?")
+- service_provided: User specified what service they need (e.g., "I need a haircut", "consultation", "repair")  
+- time_provided: User specified when they want the appointment (e.g., "tomorrow at 2pm", "next Friday")
+- contact_provided: User provided contact information (phone number, name, email)
 - confirmation_yes: User confirmed/agreed (yes, correct, that's right, etc.)
 - confirmation_no: User declined/disagreed (no, that's wrong, etc.)
 - affirmative: General positive response
 - negative: General negative response
 - unclear: Cannot determine intent
+
+IMPORTANT: "Do you have availability for [time]?" should be classified as 'booking' intent, not 'time_provided'.
 
 Be strict with confidence scores. Only use >0.7 for very clear intents.`;
 
@@ -87,6 +89,7 @@ const generateResponse = async (state, context, retryCount = 0) => {
     greeting: "Hello! I'm here to help you schedule an appointment. What service would you like to book?",
     
     service: "What type of service are you looking to schedule today?",
+    service_after_time: `Great! I see you're looking for availability on ${context.preferredTime || context.timeWindow || 'your preferred date'}. What type of service do you need?`,
     service_retry: retryCount === 1 
       ? "I didn't quite catch that. Could you please tell me what service you need? For example, consultation, maintenance, or repair?"
       : "I'm having trouble understanding the service type. Could you be more specific about what you need help with?",
@@ -96,12 +99,12 @@ const generateResponse = async (state, context, retryCount = 0) => {
       ? "I didn't get the timing. When would work best for you? You can say something like 'tomorrow morning' or 'next Friday at 2pm'."
       : "Let me try again - what day and time would you prefer for your appointment?",
     
-    contact: `Perfect! So that's ${context.service} for ${context.timeWindow}. Can I get your name and phone number?`,
+    contact: `Perfect! So that's ${context.service || 'your appointment'} for ${context.timeWindow || context.preferredTime || 'your preferred time'}. Can I get your name and phone number?`,
     contact_retry: retryCount === 1
       ? "I need your contact information to complete the booking. Could you please provide your name and phone number?"
       : "I'm sorry, I didn't catch your contact details. Please share your name and phone number.",
     
-    confirmation: `Let me confirm: ${context.service} appointment for ${context.timeWindow}, and I have your contact as ${context.contact}. Is this correct?`,
+    confirmation: `Let me confirm: ${context.service || 'appointment'} for ${context.timeWindow || context.preferredTime || 'your preferred time'}, and I have your contact as ${context.contact}. Is this correct?`,
     confirmation_retry: retryCount === 1
       ? "I need to confirm these details are correct before booking. Please say 'yes' if everything looks good, or 'no' if we need to make changes."
       : "Please confirm if these details are correct by saying 'yes' or 'no'.",
@@ -229,7 +232,7 @@ const processMessage = async (transcript, sessionId, context = {}, callId = null
       session.context.retryCount = (retryCount || 0) + 1;
     } else {
       // Generate response based on current state and intent
-      const stateKey = mapIntentToStateKey(intentResult.intent, currentState);
+      const stateKey = mapIntentToStateKey(intentResult.intent, currentState, context);
       responseText = await generateResponse(stateKey, context, retryCount);
       session.context.retryCount = 0; // Reset retry count on successful intent
     }
@@ -313,7 +316,17 @@ const processMessage = async (transcript, sessionId, context = {}, callId = null
 };
 
 // Helper function to map intents to state response keys
-const mapIntentToStateKey = (intent, currentState) => {
+const mapIntentToStateKey = (intent, currentState, context = {}) => {
+  // If user provided time but no service yet, ask for service first
+  if (intent === 'time_provided' && !context.service) {
+    return 'service_after_time';
+  }
+  
+  // If user provided service but no time yet, ask for time
+  if (intent === 'service_provided' && !context.preferredTime && !context.timeWindow) {
+    return 'timeWindow';
+  }
+  
   const mapping = {
     'booking': 'service',
     'service_provided': 'timeWindow', 
