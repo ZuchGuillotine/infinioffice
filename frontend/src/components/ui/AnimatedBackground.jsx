@@ -9,7 +9,7 @@ export default function AnimatedBackground() {
 
     const ctx = canvas.getContext('2d')
     const particles = []
-    const particleCount = 60
+    const particleCount = 80
 
     // Set canvas size
     const resizeCanvas = () => {
@@ -57,7 +57,7 @@ export default function AnimatedBackground() {
       // Draw and update particles
       particles.forEach(particle => {
         ctx.globalAlpha = particle.opacity
-        ctx.fillStyle = '#6366F1'
+         ctx.fillStyle = '#6366F1'
         ctx.beginPath()
         ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2)
         ctx.fill()
@@ -88,7 +88,7 @@ export default function AnimatedBackground() {
   return (
     <canvas
       ref={canvasRef}
-      className="absolute inset-0 -z-10 opacity-40"
+      className="absolute inset-0 -z-10 opacity-35"
       style={{ background: 'transparent' }}
     />
   )

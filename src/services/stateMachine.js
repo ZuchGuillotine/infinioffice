@@ -18,12 +18,12 @@ const bookingMachine = createMachine({
       on: {
         PROCESS_INTENT: {
           actions: assign({
-            intent: (context, event) => event.intent,
-            confidence: (context, event) => event.confidence,
-            currentResponse: (context, event) => event.response,
-            service: (context, event) => event.bookingData?.service || context.service,
-            preferredTime: (context, event) => event.bookingData?.preferredTime || context.preferredTime,
-            contact: (context, event) => event.bookingData?.contact || context.contact,
+            intent: ({ event }) => event.intent,
+            confidence: ({ event }) => event.confidence,
+            currentResponse: ({ event }) => event.response,
+            service: ({ context, event }) => event.bookingData?.service || context.service,
+            preferredTime: ({ context, event }) => event.bookingData?.preferredTime || context.preferredTime,
+            contact: ({ context, event }) => event.bookingData?.contact || context.contact,
           }),
           target: 'handleIntent',
         },
@@ -71,10 +71,10 @@ const bookingMachine = createMachine({
       on: {
         PROCESS_INTENT: {
           actions: assign({
-            service: (context, event) => event.bookingData?.service || context.service,
-            preferredTime: (context, event) => event.bookingData?.preferredTime || context.preferredTime,
-            contact: (context, event) => event.bookingData?.contact || context.contact,
-            currentResponse: (context, event) => event.response,
+            service: ({ context, event }) => event.bookingData?.service || context.service,
+            preferredTime: ({ context, event }) => event.bookingData?.preferredTime || context.preferredTime,
+            contact: ({ context, event }) => event.bookingData?.contact || context.contact,
+            currentResponse: ({ event }) => event.response,
           }),
           target: 'bookingFlow',
         },
@@ -84,10 +84,10 @@ const bookingMachine = createMachine({
       on: {
         PROCESS_INTENT: {
           actions: assign({
-            service: (context, event) => event.bookingData?.service || context.service,
-            preferredTime: (context, event) => event.bookingData?.preferredTime || context.preferredTime,
-            contact: (context, event) => event.bookingData?.contact || context.contact,
-            currentResponse: (context, event) => event.response,
+            service: ({ context, event }) => event.bookingData?.service || context.service,
+            preferredTime: ({ context, event }) => event.bookingData?.preferredTime || context.preferredTime,
+            contact: ({ context, event }) => event.bookingData?.contact || context.contact,
+            currentResponse: ({ event }) => event.response,
           }),
           target: 'bookingFlow',
         },
@@ -97,10 +97,10 @@ const bookingMachine = createMachine({
       on: {
         PROCESS_INTENT: {
           actions: assign({
-            service: (context, event) => event.bookingData?.service || context.service,
-            preferredTime: (context, event) => event.bookingData?.preferredTime || context.preferredTime,
-            contact: (context, event) => event.bookingData?.contact || context.contact,
-            currentResponse: (context, event) => event.response,
+            service: ({ context, event }) => event.bookingData?.service || context.service,
+            preferredTime: ({ context, event }) => event.bookingData?.preferredTime || context.preferredTime,
+            contact: ({ context, event }) => event.bookingData?.contact || context.contact,
+            currentResponse: ({ event }) => event.response,
           }),
           target: 'bookingFlow',
         },

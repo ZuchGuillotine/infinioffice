@@ -41,6 +41,12 @@ Intent definitions:
 Be strict with confidence scores. Only use >0.7 for very clear intents.`;
 
   try {
+    console.log('🔍 LLM Intent Detection Request:', {
+      model: 'gpt-4o',
+      transcript: transcript,
+      context: conversationContext
+    });
+
     const response = await getOpenAIClient().chat.completions.create({
       model: 'gpt-4o',
       messages: [
@@ -52,13 +58,20 @@ Be strict with confidence scores. Only use >0.7 for very clear intents.`;
       response_format: { "type": "json_object" },
     });
 
+    console.log('✅ LLM Intent Detection Response:', {
+      usage: response.usage,
+      rawResponse: response.choices[0].message.content
+    });
+
     const result = JSON.parse(response.choices[0].message.content);
+    console.log('📋 Parsed Intent Result:', result);
+    
     return {
       ...result,
       rawText: transcript
     };
   } catch (error) {
-    console.error('Intent detection error:', error);
+    console.error('❌ Intent detection error:', error);
     return {
       intent: 'unclear',
       confidence: 0.0,
@@ -165,6 +178,14 @@ const processMessage = async (transcript, sessionId, context = {}, callId = null
   const { createTurn, updateTurn } = require('./db');
   
   try {
+    console.log('🚀 ProcessMessage started:', {
+      transcript: transcript,
+      sessionId: sessionId,
+      context: context,
+      callId: callId,
+      turnIndex: turnIndex
+    });
+    
     const startTime = Date.now();
     
     // Create turn record for tracking
@@ -248,7 +269,7 @@ const processMessage = async (transcript, sessionId, context = {}, callId = null
       }
     }
     
-    return {
+    const finalResult = {
       intent: intentResult.intent,
       confidence: intentResult.confidence,
       response: responseText,
@@ -262,6 +283,16 @@ const processMessage = async (transcript, sessionId, context = {}, callId = null
       sessionId,
       turnId
     };
+    
+    console.log('✅ ProcessMessage completed successfully:', {
+      intent: finalResult.intent,
+      confidence: finalResult.confidence,
+      response: finalResult.response?.substring(0, 100) + '...',
+      bookingData: finalResult.bookingData,
+      processingTime: finalResult.processingTime
+    });
+    
+    return finalResult;
     
   } catch (error) {
     console.error('Error in processMessage:', error);

@@ -4,21 +4,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Common Commands
 
-### Development
-- `npm install` - Install dependencies
-- `npm test` - Run tests (uses Jest)
-- `node src/index.js` - Start the application on port 3000
+### Backend Development
+- `npm install` - Install backend dependencies
+- `npm start` - Start backend server on port 3000 (production)
+- `npm run dev` - Start backend server (development)
+- `npm test` - Run all tests using Jest
+- `npm run test:watch` - Run tests in watch mode
+- `npm run test:coverage` - Run tests with coverage report
+- `npm run test:unit` - Run unit tests only
+- `npm run test:integration` - Run integration tests only
+- `npm run test:e2e` - Run end-to-end tests
+- `npm run test:performance` - Run performance tests
+- `npm run test:ci` - Run tests for CI environment
+
+### Frontend Development (in `frontend/` directory)
+- `cd frontend && npm install` - Install frontend dependencies
+- `cd frontend && npm run dev` - Start Vite dev server on port 5173
+- `cd frontend && npm run build` - Build frontend for production
+- `cd frontend && npm run lint` - Run ESLint on frontend code
+- `cd frontend && npm run preview` - Preview production build
+
+### Database Management
 - `npx prisma generate` - Generate Prisma client
 - `npx prisma db push` - Push schema changes to database
 - `npx prisma migrate dev` - Create and apply migrations
 
 ### Testing Individual Services
-- `npm test calendar.test.js` - Test calendar service
-- `npm test db.test.js` - Test database service  
-- `npm test llm.test.js` - Test LLM service
-- `npm test stt.test.js` - Test speech-to-text service
-- `npm test telephony.test.js` - Test telephony service
-- `npm test tts.test.js` - Test text-to-speech service
+- `npm test tests/unit/calendar.test.js` - Test calendar service
+- `npm test tests/unit/db.test.js` - Test database service  
+- `npm test tests/unit/llm.test.js` - Test LLM service
+- `npm test tests/unit/stt.test.js` - Test speech-to-text service
+- `npm test tests/unit/telephony.test.js` - Test telephony service
+- `npm test tests/unit/tts.test.js` - Test text-to-speech service
+- `npm test tests/unit/stateMachine.test.js` - Test XState booking flow
 
 ## Architecture Overview
 
@@ -67,11 +85,20 @@ InfiniOffice is a voice-driven office assistant that handles phone calls through
 - AWS Polly Neural for TTS streaming
 - XState for deterministic dialogue flow
 
-**Infrastructure**:
+**Backend Infrastructure**:
 - Fastify for HTTP/WebSocket server
 - PostgreSQL with Prisma ORM
 - Redis for session state (referenced but not yet implemented)
 - OpenTelemetry for tracing (configured but not fully implemented)
+
+**Frontend Stack**:
+- React 18 with Vite for development and building
+- React Router for navigation
+- TanStack Query for API state management
+- Tailwind CSS for styling
+- Lucide React for icons
+- React Hook Form with Zod for form validation
+- Recharts for data visualization
 
 ## Development Notes
 
@@ -90,6 +117,34 @@ The XState machine in `stateMachine.js` enforces a strict progression:
 - State transitions happen immediately on speech recognition results
 
 ### Testing Approach
-- Individual service tests for each component in `tests/`
-- Uses Jest testing framework
+- Individual service tests for each component in `tests/unit/`
+- Integration tests in `tests/integration/`
+- End-to-end tests in `tests/e2e/`
+- Performance tests in `tests/performance/`
+- Uses Jest testing framework with 80% coverage threshold
 - Services are tested independently of the main application flow
+- Mock services available in `tests/mocks/`
+- Test helpers and fixtures provided
+
+### Multi-Service Architecture
+This is a full-stack application with:
+- **Backend**: Node.js/Fastify server in the root directory
+- **Frontend**: React/Vite application in `frontend/` directory
+- **Database**: PostgreSQL with Prisma ORM
+- **Voice Pipeline**: Real-time WebSocket integration with Twilio Media Streams
+
+### Organization Models
+The database includes multi-tenancy support:
+- `Organization` - Main tenant entity with plans and branding
+- `User` - Organization members with role-based access
+- `BusinessConfig` - Organization-specific settings (hours, services, greeting)
+- `Integration` - Third-party service connections (Google Calendar, etc.)
+- All data is scoped to organizations for proper multi-tenancy
+
+### Frontend Architecture
+The React frontend includes:
+- Dashboard layout with multiple management pages
+- Onboarding flow for new organizations
+- Configuration editors for business settings
+- Real-time call monitoring and analytics
+- Responsive design with Tailwind CSS components

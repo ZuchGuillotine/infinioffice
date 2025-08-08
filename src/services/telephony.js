@@ -8,8 +8,11 @@ const handleIncomingCall = (req, res) => {
   // Start immediate streaming connection without initial TTS
   // The greeting will be handled via Deepgram TTS through the WebSocket
   const connect = voiceResponse.connect();
+  
+  // Use the original host from the request or ngrok forwarded host
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
   connect.stream({
-    url: `wss://${req.headers.host}`,
+    url: `wss://${host}`,
   });
 
   res.type('text/xml');

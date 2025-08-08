@@ -21,6 +21,7 @@ export default function LandingPage() {
     <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-background via-background to-secondary/20">
       <AnimatedBackground />
       <GradientOrbs />
+      <div className="noise-overlay" />
       
       <nav className="container mx-auto px-6 py-6 flex items-center justify-between relative z-10">
         <div className="flex items-center gap-3">
@@ -42,7 +43,7 @@ export default function LandingPage() {
             </Button>
           </Link>
           <Link to="/app">
-            <Button className="bg-gradient-to-r from-primary to-accent hover:shadow-lg hover:shadow-primary/25 transition-all duration-300">
+            <Button variant="gradient" className="transition-all duration-300">
               Sign In
             </Button>
           </Link>
@@ -70,6 +71,9 @@ export default function LandingPage() {
             <span className="text-primary font-semibold">AI agents that sound human.</span>
             <span className="text-accent font-semibold"> Results that drive revenue.</span>
           </p>
+          <div className="mx-auto w-40 h-40 rounded-full voice-gradient animate-float gradient-ring mb-6 flex items-center justify-center">
+            <AudioVisualization isActive={true} height="h-12" barCount={18} />
+          </div>
           
           <div className="flex items-center justify-center gap-8 mb-8">
             <div className="text-center">
@@ -91,7 +95,7 @@ export default function LandingPage() {
         
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
           <Link to="/onboarding">
-            <Button size="lg" className="text-lg px-8 py-4 bg-gradient-to-r from-primary to-accent hover:shadow-xl hover:shadow-primary/30 transition-all duration-500 transform hover:scale-105">
+            <Button size="xl" variant="gradient" className="text-lg px-8 py-4 hover:shadow-xl hover:shadow-primary/30 transition-all duration-500 transform hover:scale-105">
               Start Free Trial →
             </Button>
           </Link>

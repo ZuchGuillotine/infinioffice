@@ -12,11 +12,11 @@ export default function PricingPage() {
       <p className="text-center text-muted-foreground mb-10">Choose a plan that fits your call volume.</p>
       <div className="grid md:grid-cols-3 gap-6 max-w-6xl mx-auto">
         {tiers.map(t => (
-          <div key={t.name} className="glass rounded-xl p-6 text-center">
+          <div key={t.name} className="glass rounded-xl p-6 text-center gradient-ring">
             <div className="text-sm text-muted-foreground">{t.name}</div>
             <div className="text-3xl font-semibold mt-2">{t.price}</div>
             <div className="text-sm text-muted-foreground mt-2">{t.detail}</div>
-            <Button className="mt-6 w-full">{t.cta}</Button>
+            <Button variant={t.name === 'Growth' ? 'gradient' : 'primary'} className="mt-6 w-full">{t.cta}</Button>
           </div>
         ))}
       </div>

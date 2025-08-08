@@ -93,14 +93,16 @@ fastify.register(async function (fastify) {
     // STT will be started when Twilio stream begins
     let sttReady = false;
     let streamStarted = false;
+    let greetingSent = false;
 
     // Handle STT events
     sttService.on('ready', () => {
       console.log('STT service ready');
       sttReady = true;
-      // Only send greeting if both STT is ready and stream has started
-      if (streamStarted && sttReady) {
+      // Only send greeting if both STT is ready and stream has started, and greeting hasn't been sent yet
+      if (streamStarted && sttReady && !greetingSent) {
         console.log('Both STT ready and stream started - sending initial greeting');
+        greetingSent = true;
         setTimeout(sendInitialGreeting, 500); // Small delay to ensure connection stability
       }
     });
@@ -196,18 +198,20 @@ fastify.register(async function (fastify) {
         callId,
         turnIndex
       ); */
+      const currentSnapshot = bookingService.getSnapshot();
       const llmResult = await processMessage(
         transcript,
         sessionId,
-        { state: bookingService.state.value || 'idle' }
+        { state: currentSnapshot.value || 'idle' }
       );
       const llmMs = Date.now() - llmStartTime;
       
-      console.log('LLM Result:', {
+      console.log('🧠 LLM Result:', {
         intent: llmResult.intent,
         confidence: llmResult.confidence,
         response: llmResult.response?.substring(0, 100) + '...',
-        bookingData: llmResult.bookingData
+        bookingData: llmResult.bookingData,
+        processingTime: llmResult.processingTime
       });
       // currentTurnId = llmResult.turnId;
 
@@ -218,7 +222,14 @@ fastify.register(async function (fastify) {
       }
 
       // Step 2: Update State Machine
-      const currentState = bookingService.send({
+      console.log('🔄 Sending to State Machine:', {
+        type: 'PROCESS_INTENT',
+        intent: llmResult.intent,
+        confidence: llmResult.confidence,
+        hasBookingData: !!llmResult.bookingData
+      });
+      
+      bookingService.send({
         type: 'PROCESS_INTENT',
         intent: llmResult.intent,
         confidence: llmResult.confidence,
@@ -226,14 +237,31 @@ fastify.register(async function (fastify) {
         bookingData: llmResult.bookingData,
         originalSpeech: transcript
       });
+      
+      const currentState = bookingService.getSnapshot();
+      console.log('⚙️ State Machine updated:', {
+        state: currentState.value,
+        context: currentState.context
+      });
 
       // Use state machine response if available, otherwise LLM response
       const responseText = currentState.context?.currentResponse || llmResult.response;
 
       // Step 3: Generate and stream TTS
+      console.log('🔊 Starting TTS generation:', {
+        text: responseText?.substring(0, 50) + '...',
+        streamSid: streamSid
+      });
+      
       const ttsStartTime = Date.now();
       const ttsResult = await ttsService.generateAndStream(responseText, ws, { streamId: streamSid });
       const ttsMs = Date.now() - ttsStartTime;
+      
+      console.log('✅ TTS completed:', {
+        generationTime: ttsResult.metrics?.generationTime || 'unknown',
+        streamingTime: ttsResult.metrics?.streamingTime || 'unknown',
+        audioSize: ttsResult.metrics?.audioSize || 'unknown'
+      });
 
       // Record TTS performance
       if (currentTurnId) {
@@ -436,8 +464,8 @@ fastify.register(async function (fastify) {
 
         // Send greeting once both stream is started and STT is ready
         if (sttReady && streamStarted) {
-          console.log('Stream started and STT already ready - sending initial greeting');
-          setTimeout(sendInitialGreeting, 500); // Small delay to ensure connection stability
+          console.log('Stream started and STT already ready - initial greeting will be handled by ready event');
+          // Don't send greeting here since it's already handled in the ready event handler
         }
         
       } else if (data.event === 'media') {
