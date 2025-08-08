@@ -149,7 +149,7 @@ class STTService extends EventEmitter {
 
             // Reset barge-in detection after a final transcript
             this.bargeInDetected = false;
-            this.resetSilenceTimeout();
+            // Don't reset silence timeout here - let index.js handle it
             
             // Emit speech ended event for speech_final
             if (isSpeechFinal) {
@@ -195,7 +195,7 @@ class STTService extends EventEmitter {
         timestamp: Date.now(),
         finalTranscript: this.currentTranscript 
       });
-      this.resetSilenceTimeout();
+      // Don't reset silence timeout here - let index.js handle it
     });
 
     this.connection.on('error', (error) => {

@@ -29,16 +29,20 @@ Current conversation context: ${JSON.stringify(conversationContext)}
 
 Intent definitions:
 - booking: User wants to book an appointment (e.g., "I need an appointment", "Do you have availability?", "Can I schedule?")
-- service_provided: User specified what service they need (e.g., "I need a haircut", "consultation", "repair")  
+- service_provided: User specified what service they need (e.g., "I need a haircut", "consultation", "repair", "perm", "a perm", "I want a perm")  
 - time_provided: User specified when they want the appointment (e.g., "tomorrow at 2pm", "next Friday")
 - contact_provided: User provided contact information (phone number, name, email)
 - confirmation_yes: User confirmed/agreed (yes, correct, that's right, etc.)
 - confirmation_no: User declined/disagreed (no, that's wrong, etc.)
-- affirmative: General positive response
+- affirmative: General positive response when user confirms they want to proceed
 - negative: General negative response
 - unclear: Cannot determine intent
 
-IMPORTANT: "Do you have availability for [time]?" should be classified as 'booking' intent, not 'time_provided'.
+IMPORTANT: 
+- "Do you have availability for [time]?" should be classified as 'booking' intent, not 'time_provided'.
+- "A perm" or "I want a perm" should be classified as 'service_provided' with service entity "perm"
+- "Definitely trying to get a perm" should be classified as 'service_provided' with service entity "perm"
+- If user mentions a service type in any form, classify as 'service_provided' and extract the service
 
 Be strict with confidence scores. Only use >0.7 for very clear intents.`;
 
@@ -94,7 +98,7 @@ const generateResponse = async (state, context, retryCount = 0) => {
       ? "I didn't quite catch that. Could you please tell me what service you need? For example, consultation, maintenance, or repair?"
       : "I'm having trouble understanding the service type. Could you be more specific about what you need help with?",
     
-    timeWindow: `Great! You'd like to book ${context.service}. When would you prefer to schedule this?`,
+    timeWindow: `Great! You'd like to book a ${context.service || 'service'}. When would you prefer to schedule this?`,
     timeWindow_retry: retryCount === 1
       ? "I didn't get the timing. When would work best for you? You can say something like 'tomorrow morning' or 'next Friday at 2pm'."
       : "Let me try again - what day and time would you prefer for your appointment?",
@@ -217,7 +221,10 @@ const processMessage = async (transcript, sessionId, context = {}, callId = null
     
     const intentMs = Date.now() - startTime;
     
-    // Step 2: Generate contextual response
+    // Step 2: Extract booking data from entities (before response generation)
+    const bookingData = extractBookingData(intentResult.entities, context);
+    
+    // Step 3: Generate contextual response
     const responseStartTime = Date.now();
     let responseText;
     
@@ -233,7 +240,21 @@ const processMessage = async (transcript, sessionId, context = {}, callId = null
     } else {
       // Generate response based on current state and intent
       const stateKey = mapIntentToStateKey(intentResult.intent, currentState, context);
-      responseText = await generateResponse(stateKey, context, retryCount);
+      
+      // Merge existing context with new booking data for response generation
+      const contextForResponse = {
+        ...context,
+        ...bookingData  // Include newly extracted data
+      };
+      
+      console.log('🎯 Response Generation:', {
+        intent: intentResult.intent,
+        stateKey: stateKey,
+        contextForResponse: contextForResponse,
+        currentState: currentState
+      });
+      
+      responseText = await generateResponse(stateKey, contextForResponse, retryCount);
       session.context.retryCount = 0; // Reset retry count on successful intent
     }
     
@@ -257,8 +278,7 @@ const processMessage = async (transcript, sessionId, context = {}, callId = null
       }
     });
     
-    // Step 4: Extract booking data from entities
-    const bookingData = extractBookingData(intentResult.entities, context);
+    // Step 4: Booking data already extracted above
     
     // Step 5: Update turn record with processing times
     if (turnId && callId) {
@@ -322,9 +342,37 @@ const mapIntentToStateKey = (intent, currentState, context = {}) => {
     return 'service_after_time';
   }
   
-  // If user provided service but no time yet, ask for time
-  if (intent === 'service_provided' && !context.preferredTime && !context.timeWindow) {
-    return 'timeWindow';
+  // If user provided service, check what we need next
+  if (intent === 'service_provided') {
+    // If we have service but no time, ask for time
+    if (context.service && !context.preferredTime && !context.timeWindow) {
+      return 'timeWindow';
+    }
+    // If we have service and time but no contact, ask for contact
+    if (context.service && (context.preferredTime || context.timeWindow) && !context.contact) {
+      return 'contact';
+    }
+    // If we just got the service, ask for time
+    if (!context.preferredTime && !context.timeWindow) {
+      return 'timeWindow';
+    }
+  }
+  
+  // Handle affirmative responses based on current state
+  if (intent === 'affirmative') {
+    // If we're collecting service and user says "yes" or similar, 
+    // they might be confirming they want to book
+    if (currentState === 'collectService' || currentState === 'idle') {
+      return 'service';
+    }
+    // If we have service but no time, ask for time
+    if (context.service && !context.preferredTime && !context.timeWindow) {
+      return 'timeWindow';
+    }
+    // If we have service and time but no contact, ask for contact
+    if (context.service && (context.preferredTime || context.timeWindow) && !context.contact) {
+      return 'contact';
+    }
   }
   
   const mapping = {

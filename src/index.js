@@ -132,7 +132,10 @@ fastify.register(async function (fastify) {
 
     sttService.on('speechEnded', () => {
       console.log('Speech ended');
-      resetSilenceTimeout();
+      // Only start silence timeout if we're not processing a turn
+      if (!isProcessingTurn) {
+        resetSilenceTimeout();
+      }
     });
 
     sttService.on('silence', () => {
@@ -199,10 +202,22 @@ fastify.register(async function (fastify) {
         turnIndex
       ); */
       const currentSnapshot = bookingService.getSnapshot();
+      const contextWithState = { 
+        state: currentSnapshot.value || 'idle',
+        ...currentSnapshot.context // Include current booking context
+      };
+      
+      console.log('📋 Current context being sent to LLM:', {
+        state: contextWithState.state,
+        service: contextWithState.service,
+        preferredTime: contextWithState.preferredTime,
+        contact: contextWithState.contact
+      });
+      
       const llmResult = await processMessage(
         transcript,
         sessionId,
-        { state: currentSnapshot.value || 'idle' }
+        contextWithState
       );
       const llmMs = Date.now() - llmStartTime;
       
@@ -226,7 +241,8 @@ fastify.register(async function (fastify) {
         type: 'PROCESS_INTENT',
         intent: llmResult.intent,
         confidence: llmResult.confidence,
-        hasBookingData: !!llmResult.bookingData
+        hasBookingData: !!llmResult.bookingData,
+        entities: llmResult.entities
       });
       
       bookingService.send({
@@ -235,6 +251,7 @@ fastify.register(async function (fastify) {
         confidence: llmResult.confidence,
         response: llmResult.response,
         bookingData: llmResult.bookingData,
+        entities: llmResult.entities,
         originalSpeech: transcript
       });
       
@@ -244,8 +261,8 @@ fastify.register(async function (fastify) {
         context: currentState.context
       });
 
-      // Use state machine response if available, otherwise LLM response
-      const responseText = currentState.context?.currentResponse || llmResult.response;
+      // Use LLM response (which is context-aware), not the old stored response
+      const responseText = llmResult.response;
 
       // Step 3: Generate and stream TTS
       console.log('🔊 Starting TTS generation:', {
@@ -315,6 +332,7 @@ fastify.register(async function (fastify) {
     } finally {
       isProcessingTurn = false;
       resetConversationTimeout();
+      resetSilenceTimeout(); // Restart silence detection after processing
     }
   };
 

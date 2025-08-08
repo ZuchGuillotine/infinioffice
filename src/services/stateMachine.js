@@ -1,3 +1,15 @@
+/**
+    * @description      : 
+    * @author           : 
+    * @group            : 
+    * @created          : 08/08/2025 - 16:31:05
+    * 
+    * MODIFICATION LOG
+    * - Version         : 1.0.0
+    * - Date            : 08/08/2025
+    * - Author          : 
+    * - Modification    : 
+**/
 const { createMachine, assign } = require('xstate');
 const { createAppointment } = require('./db');
 
@@ -21,9 +33,22 @@ const bookingMachine = createMachine({
             intent: ({ event }) => event.intent,
             confidence: ({ event }) => event.confidence,
             currentResponse: ({ event }) => event.response,
-            service: ({ context, event }) => event.bookingData?.service || context.service,
-            preferredTime: ({ context, event }) => event.bookingData?.preferredTime || context.preferredTime,
-            contact: ({ context, event }) => event.bookingData?.contact || context.contact,
+            service: ({ context, event }) => {
+              const newService = event.bookingData?.service || event.entities?.service;
+              const result = newService || context.service;
+              if (newService) {
+                console.log(`🔧 State Machine: Service updated from "${context.service}" to "${result}"`);
+              }
+              return result;
+            },
+            preferredTime: ({ context, event }) => {
+              const newTime = event.bookingData?.preferredTime || event.entities?.timeWindow;
+              return newTime || context.preferredTime;
+            },
+            contact: ({ context, event }) => {
+              const newContact = event.bookingData?.contact || event.entities?.contact;
+              return newContact || context.contact;
+            },
           }),
           target: 'handleIntent',
         },
@@ -71,9 +96,18 @@ const bookingMachine = createMachine({
       on: {
         PROCESS_INTENT: {
           actions: assign({
-            service: ({ context, event }) => event.bookingData?.service || context.service,
-            preferredTime: ({ context, event }) => event.bookingData?.preferredTime || context.preferredTime,
-            contact: ({ context, event }) => event.bookingData?.contact || context.contact,
+            service: ({ context, event }) => {
+              const newService = event.bookingData?.service || event.entities?.service;
+              return newService || context.service;
+            },
+            preferredTime: ({ context, event }) => {
+              const newTime = event.bookingData?.preferredTime || event.entities?.timeWindow;
+              return newTime || context.preferredTime;
+            },
+            contact: ({ context, event }) => {
+              const newContact = event.bookingData?.contact || event.entities?.contact;
+              return newContact || context.contact;
+            },
             currentResponse: ({ event }) => event.response,
           }),
           target: 'bookingFlow',
@@ -84,9 +118,18 @@ const bookingMachine = createMachine({
       on: {
         PROCESS_INTENT: {
           actions: assign({
-            service: ({ context, event }) => event.bookingData?.service || context.service,
-            preferredTime: ({ context, event }) => event.bookingData?.preferredTime || context.preferredTime,
-            contact: ({ context, event }) => event.bookingData?.contact || context.contact,
+            service: ({ context, event }) => {
+              const newService = event.bookingData?.service || event.entities?.service;
+              return newService || context.service;
+            },
+            preferredTime: ({ context, event }) => {
+              const newTime = event.bookingData?.preferredTime || event.entities?.timeWindow;
+              return newTime || context.preferredTime;
+            },
+            contact: ({ context, event }) => {
+              const newContact = event.bookingData?.contact || event.entities?.contact;
+              return newContact || context.contact;
+            },
             currentResponse: ({ event }) => event.response,
           }),
           target: 'bookingFlow',
@@ -97,9 +140,18 @@ const bookingMachine = createMachine({
       on: {
         PROCESS_INTENT: {
           actions: assign({
-            service: ({ context, event }) => event.bookingData?.service || context.service,
-            preferredTime: ({ context, event }) => event.bookingData?.preferredTime || context.preferredTime,
-            contact: ({ context, event }) => event.bookingData?.contact || context.contact,
+            service: ({ context, event }) => {
+              const newService = event.bookingData?.service || event.entities?.service;
+              return newService || context.service;
+            },
+            preferredTime: ({ context, event }) => {
+              const newTime = event.bookingData?.preferredTime || event.entities?.timeWindow;
+              return newTime || context.preferredTime;
+            },
+            contact: ({ context, event }) => {
+              const newContact = event.bookingData?.contact || event.entities?.contact;
+              return newContact || context.contact;
+            },
             currentResponse: ({ event }) => event.response,
           }),
           target: 'bookingFlow',
@@ -162,13 +214,29 @@ const bookingMachine = createMachine({
   },
 }, {
   guards: {
-    isBookingIntent: (context, event) => event.intent === 'booking',
-    isNonBookingIntent: (context, event) => ['hours', 'location', 'services', 'other'].includes(event.intent),
-    hasAllBookingData: (context) => context.service && context.preferredTime && context.contact,
-    needsService: (context) => !context.service,
-    needsTime: (context) => context.service && !context.preferredTime,
-    needsContact: (context) => context.service && context.preferredTime && !context.contact,
-    isConfirmation: (context, event) => {
+    isBookingIntent: ({ event }) => event.intent === 'booking',
+    isNonBookingIntent: ({ event }) => ['hours', 'location', 'services', 'other'].includes(event.intent),
+    hasAllBookingData: ({ context }) => {
+      const result = context.service && context.preferredTime && context.contact;
+      console.log(`🔍 hasAllBookingData: service=${context.service}, time=${context.preferredTime}, contact=${context.contact} => ${result}`);
+      return result;
+    },
+    needsService: ({ context }) => {
+      const result = !context.service;
+      console.log(`🔍 needsService: service=${context.service} => ${result}`);
+      return result;
+    },
+    needsTime: ({ context }) => {
+      const result = context.service && !context.preferredTime;
+      console.log(`🔍 needsTime: service=${context.service}, time=${context.preferredTime} => ${result}`);
+      return result;
+    },
+    needsContact: ({ context }) => {
+      const result = context.service && context.preferredTime && !context.contact;
+      console.log(`🔍 needsContact: service=${context.service}, time=${context.preferredTime}, contact=${context.contact} => ${result}`);
+      return result;
+    },
+    isConfirmation: ({ event }) => {
       const speech = event.originalSpeech || '';
       return /\b(yes|yeah|yep|correct|right|confirm|book|schedule)\b/i.test(speech);
     },
