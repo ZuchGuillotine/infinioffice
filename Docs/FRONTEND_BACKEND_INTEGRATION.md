@@ -270,3 +270,43 @@ This document outlines the integration points between the React frontend and Nod
 ---
 
 *This document should be updated as the integration evolves. Both teams should review and approve changes.* 
+
+## Recommended Updates from Frontend Scaffolding
+
+The new onboarding and configuration UIs surfaced a few concrete backend contract needs to enable a smooth pilot:
+
+- Onboarding flows
+  - POST `/api/telephony/setup-routing` – Given `businessPhone`, provision an application number and configure Twilio webhooks/routing behind the scenes; returns routing status.
+  - POST `/api/calls/test` – Initiate a test outbound call to admin, play current greeting, record feedback; returns job id/status.
+  - POST `/api/tts/preview` – Generate short TTS preview from provided text and selected voice; returns temporary audio URL.
+
+- Business configuration
+  - Current `BusinessConfig` covers `services`, `businessHours`, `timezone`, `escalationNumber`, and `greeting`.
+  - Proposed additions:
+    - `scripts.fallback` (string) – Fallback phrase when ASR confidence is low.
+    - `rules.defaultSlotMinutes` (number)
+    - `rules.bufferMinutes` (number)
+    - `rules.allowDoubleBooking` (boolean)
+  - API shape (suggested):
+    - `GET /api/organizations/config` – Returns full `BusinessConfig` (including `services` and `rules`).
+    - `PUT /api/organizations/config` – Upserts full `BusinessConfig`.
+    - Optional granular endpoints if needed later: `/api/organizations/config/services`, `/rules`, `/scripts`.
+
+- Integrations
+  - `GET /api/organizations/integrations` already listed; add OAuth begin/callback routes for calendars and Stripe:
+    - `GET /api/integrations/google-calendar/authorize`
+    - `GET /api/integrations/google-calendar/callback`
+    - `GET /api/integrations/outlook/authorize`
+    - `GET /api/integrations/outlook/callback`
+    - `GET /api/integrations/stripe/authorize`
+    - `GET /api/integrations/stripe/callback`
+
+- Realtime status
+  - Confirm WS endpoint path and payload for live agent/call metrics used by dashboard header status chip:
+    - `wss://…/realtime` or `/ws/status` with payload `{ latencyMs, routingMode, activeCalls }`.
+
+- Auth
+  - Frontend will need a simple session endpoint for dashboard shell:
+    - `GET /api/auth/session` – Returns current user and organization summary.
+
+These can be stubs for pilot and incrementally wired as backend finalizes.

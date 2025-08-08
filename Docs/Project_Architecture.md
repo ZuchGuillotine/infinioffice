@@ -53,9 +53,9 @@
 │  └────────────┘  └────────────┘  └────────────┘               │
 │                                                                 │
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐               │
-│  │ AWS Polly  │  │  Calendar  │  │   Stripe   │               │
-│  │  - TTS     │  │  - Google  │  │  - Billing │               │
-│  │  - Neural  │  │  - Outlook │  │  - Subs    │               │
+│  │ Deepgram   │  │  Calendar  │  │   Stripe   │               │
+│  │  - TTS v4  │  │  - Google  │  │  - Billing │               │
+│  │  - Stream  │  │  - Outlook │  │  - Subs    │               │
 │  └────────────┘  └────────────┘  └────────────┘               │
 └─────────────────────────────────────────────────────────────────┘
                         │
@@ -94,10 +94,11 @@
     - <500ms initial results
     - Domain-specific keyword biasing
     - Fallback to Google Cloud Speech for accuracy
-  - **TTS**: AWS Polly Neural ($0.016/min spoken)
-    - <300ms startup latency
-    - Multiple voice options
-    - Caching for repeated prompts
+- **TTS**: Deepgram TTS (v4 streaming)
+  - <300ms startup latency (target)
+  - Voice options (Aura family)
+  - Streaming API compatibility with Twilio
+  - Caching for repeated prompts
 
 - **LLM Orchestration** (Deterministic + AI)
   - **State Machine**: Core dialogue flow (Temporal/XState)
@@ -217,6 +218,15 @@ billing_events
 /ws/voice/*              - WebSocket for voice
 ```
 
+### Pilot Onboarding Endpoints
+- `POST /api/telephony/setup-routing` — Given `businessPhone`, provision application number and configure Twilio routing/webhooks behind the scenes. Returns routing status/details.
+- `POST /api/tts/preview` — Return short TTS preview audio URL for provided text/voice.
+- `POST /api/calls/test` — Trigger a test call to admin, play current greeting, store feedback.
+
+### Developer Environments (Dev)
+- Frontend: Vite dev server at `http://localhost:5173`
+- Backend API: Fastify at `http://localhost:3001`
+
 ## Deployment Pipeline
 
 ### Environments
@@ -305,11 +315,10 @@ billing_events
 - **Infrastructure**: $0.02
 - **Total**: $0.20-0.50
 
-### Pricing Model
-- **Starter**: $99/mo - 100 calls
-- **Growth**: $299/mo - 300 calls
-- **Scale**: $599/mo - 1000 calls
-- **Overage**: $1.50 per additional call
+### Pricing Model (Pilot)
+- **Starter**: $299/mo – up to 250 calls (ideal for small teams)
+- **Growth**: $899/mo – up to 999 calls (for scaling operations)
+- **Custom**: Volume-based discounts (contact team)
 
 ### Target Metrics
 - 85%+ booking success rate

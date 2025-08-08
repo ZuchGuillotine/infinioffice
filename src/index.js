@@ -108,6 +108,7 @@ fastify.register(async function (fastify) {
     sttService.on('transcript', async (data) => {
       if (data.isFinal && !isProcessingTurn && data.text.trim().length > 0) {
         console.log(`Final transcript: "${data.text}" (confidence: ${data.confidence})`);
+        console.log(`Processing turn - isProcessingTurn: ${isProcessingTurn}`);
         await processTurn(data.text, data.confidence);
       } else if (!data.isFinal && data.text.trim().length > 0) {
         console.log(`Interim transcript: "${data.text}"`);
@@ -172,6 +173,8 @@ fastify.register(async function (fastify) {
 
   // Process a complete turn (STT -> LLM -> TTS)
   const processTurn = async (transcript, confidence) => {
+    console.log(`processTurn called with transcript: "${transcript}", isProcessingTurn: ${isProcessingTurn}`);
+    
     if (isProcessingTurn) {
       console.log('Turn already in progress, ignoring:', transcript);
       return;
@@ -196,9 +199,16 @@ fastify.register(async function (fastify) {
       const llmResult = await processMessage(
         transcript,
         sessionId,
-        { state: bookingService.state.value }
+        { state: bookingService.state.value || 'idle' }
       );
       const llmMs = Date.now() - llmStartTime;
+      
+      console.log('LLM Result:', {
+        intent: llmResult.intent,
+        confidence: llmResult.confidence,
+        response: llmResult.response?.substring(0, 100) + '...',
+        bookingData: llmResult.bookingData
+      });
       // currentTurnId = llmResult.turnId;
 
       // Initialize performance monitoring
@@ -218,7 +228,7 @@ fastify.register(async function (fastify) {
       });
 
       // Use state machine response if available, otherwise LLM response
-      const responseText = currentState.context.currentResponse || llmResult.response;
+      const responseText = currentState.context?.currentResponse || llmResult.response;
 
       // Step 3: Generate and stream TTS
       const ttsStartTime = Date.now();
@@ -239,7 +249,7 @@ fastify.register(async function (fastify) {
         response: responseText,
         intent: llmResult.intent,
         confidence: llmResult.confidence,
-        state: currentState.value,
+        state: currentState.value || 'unknown',
         processingTime: {
           llm: llmMs,
           tts: ttsMs,
@@ -257,7 +267,7 @@ fastify.register(async function (fastify) {
       turnIndex++;
 
       // Check for final state
-      if (currentState.matches('success') || currentState.matches('fallback')) {
+      if (currentState.matches && (currentState.matches('success') || currentState.matches('fallback'))) {
         await handleConversationEnd(currentState);
       }
 

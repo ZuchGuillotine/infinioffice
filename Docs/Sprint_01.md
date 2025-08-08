@@ -36,6 +36,18 @@
 
 **Developer Note (2025-08-07):** We are temporarily disabling database calls during active conversations to isolate and troubleshoot the voice pipeline. The `createCall` function was failing due to a foreign key constraint on `organizationId`, which needs to be resolved by ensuring the correct `organizationId` is seeded in the database before a call is made. All database calls in `src/index.js` related to call and turn creation/updates have been commented out until the pipeline is stable.
 
+**Frontend Progress (2025-08-08):**
+- React + Vite + Tailwind scaffold created with elegant landing and onboarding wizard.
+- Pricing page added with pilot tiers ($299/250 calls, $899/999 calls, Custom).
+- Dashboard shell with modular Business Configuration (Business Info, Services, Scheduling, Voice Scripts).
+- Onboarding updated: collect business contact info first, routing auto-setup, script prefilled with org name and capability line.
+- Frontend dev server moved to `http://localhost:5173` to avoid backend port 3000.
+
+**Backend-Frontend Contracts Proposed:** (documented in `Docs/FRONTEND_BACKEND_INTEGRATION.md`)
+- `POST /api/telephony/setup-routing` – Provision app number and configure Twilio routing using provided `businessPhone`.
+- `POST /api/tts/preview` – Short audio preview for scripts.
+- `POST /api/calls/test` – Trigger test outbound call to play greeting and store feedback.
+
 ---
 
 ## 🎯 **MVP Definition**
