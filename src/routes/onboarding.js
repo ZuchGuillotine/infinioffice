@@ -1,8 +1,10 @@
 const { PrismaClient } = require('@prisma/client');
 const { authMiddleware, requireRole } = require('../middleware/auth');
+const { TwilioNumberService } = require('../services/twilioNumbers');
 const jwt = require('jsonwebtoken');
 
 const prisma = new PrismaClient();
+const twilioService = new TwilioNumberService();
 
 async function onboardingRoutes(fastify, options) {
   // Create organization during onboarding (requires authentication)
@@ -24,11 +26,30 @@ async function onboardingRoutes(fastify, options) {
     }
 
     try {
+      // Provision Twilio number first
+      let twilioNumber = null;
+      let numberDetails = null;
+      
+      try {
+        // Use mock provisioning in development, real provisioning in production
+        if (process.env.NODE_ENV === 'development' || process.env.TWILIO_MOCK_NUMBERS === 'true') {
+          numberDetails = await twilioService.mockProvisionNumber(userId, { areaCode: '555' });
+        } else {
+          numberDetails = await twilioService.provisionNumber(userId);
+        }
+        twilioNumber = numberDetails.phoneNumber;
+        fastify.log.info('Provisioned Twilio number:', twilioNumber);
+      } catch (error) {
+        fastify.log.warn('Failed to provision Twilio number, continuing without:', error.message);
+        // Continue with organization creation even if number provisioning fails
+      }
+
       // Create organization with business config
       const organization = await prisma.organization.create({
         data: {
           name: organizationName,
           plan: 'starter',
+          twilioNumber: twilioNumber, // Store the provisioned number
           businessConfig: {
             create: {
               businessHours: businessHours || {
@@ -51,7 +72,23 @@ async function onboardingRoutes(fastify, options) {
                 }
               ],
               greeting: greeting || 'Hello! Thank you for calling. I\'m here to help you schedule an appointment. How can I assist you today?',
-              timezone: timezone || 'America/New_York'
+              timezone: timezone || 'America/New_York',
+              scripts: {
+                greeting: greeting || 'Hello! Thank you for calling. I\'m here to help you schedule an appointment. How can I assist you today?',
+                fallback: 'I apologize, but I\'m having trouble understanding. Let me connect you with someone who can help.',
+                confirmation: 'Let me confirm your appointment details...',
+                success: 'Your appointment has been successfully scheduled!'
+              },
+              rules: {
+                defaultSlotMinutes: 60,
+                bufferMinutes: 15,
+                allowDoubleBooking: false
+              },
+              voiceSettings: {
+                voiceModel: 'aura-asteria-en',
+                speed: 1.0,
+                pitch: 1.0
+              }
             }
           }
         },
@@ -68,7 +105,9 @@ async function onboardingRoutes(fastify, options) {
 
       return {
         organization,
-        message: 'Organization created successfully'
+        twilioNumber,
+        numberDetails,
+        message: 'Organization created successfully' + (twilioNumber ? ` with phone number ${twilioNumber}` : '')
       };
     } catch (error) {
       fastify.log.error('Error creating organization:', error);

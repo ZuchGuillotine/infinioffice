@@ -1,7 +1,11 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import { useState, useEffect } from 'react'
 import Button from '../../components/ui/Button.jsx'
+import { useApi } from '../../hooks/useApi'
+import { organizations } from '../../lib/api'
 
 export default function DashboardLayout() {
+  const { data: organization, loading: orgLoading } = useApi(organizations.get, []);
   return (
     <div className="min-h-screen grid grid-cols-12 bg-gradient-to-br from-background via-background to-secondary/10">
       <aside className="col-span-12 md:col-span-3 lg:col-span-2 border-r border-border/40 p-4 sticky top-0 h-screen hidden md:block">
@@ -20,7 +24,14 @@ export default function DashboardLayout() {
       </aside>
       <main className="col-span-12 md:col-span-9 lg:col-span-10 p-6">
         <div className="glass-strong rounded-xl p-4 border border-primary/20 flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-semibold">Dashboard</h1>
+          <div>
+            <h1 className="text-2xl font-semibold">Dashboard</h1>
+            {organization?.twilioNumber && (
+              <p className="text-sm text-muted-foreground mt-1">
+                InfiniOffice Number: <span className="text-primary font-medium">{organization.twilioNumber}</span>
+              </p>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             <Button variant="glass">Status: Online</Button>
             <Button variant="gradient">New Test Call</Button>

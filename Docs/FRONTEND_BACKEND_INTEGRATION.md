@@ -273,7 +273,7 @@ This document outlines the integration points between the React frontend and Nod
 
 ---
 
-**Last Updated**: August 2025 - Enhanced UI design requirements added 
+**Last Updated**: August 2025 - Organization-specific voice pipeline and phone number integration added 
 
 ## Recommended Updates from Frontend Scaffolding
 
@@ -314,6 +314,24 @@ The new onboarding and configuration UIs surfaced a few concrete backend contrac
     - `GET /api/auth/session` – Returns current user and organization summary.
 
 These can be stubs for pilot and incrementally wired as backend finalizes.
+
+## Recent Integration Updates (August 2025)
+
+### Organization-Specific Voice Pipeline
+- **Database Schema**: Added `twilioNumber` to Organization model, extended BusinessConfig with `scripts`, `rules`, `voiceSettings`
+- **Phone Number Management**: 
+  - `POST /api/onboarding/create-organization` now provisions Twilio numbers automatically
+  - Organizations endpoint returns `twilioNumber` field
+  - Mock provisioning available for development via `TWILIO_MOCK_NUMBERS=true`
+- **Voice Pipeline Context**:
+  - WebSocket connections now receive organization context via query parameters
+  - Voice pipeline loads organization-specific scripts, services, and voice settings
+  - LLM processing uses custom prompts and service catalogs per organization
+- **Frontend Integration**:
+  - Dashboard header displays assigned InfiniOffice number
+  - Business Info configuration shows phone number prominently
+  - Organization API client includes `twilioNumber` in responses
+- **Call Routing**: Twilio webhook passes `to`, `from`, `callSid` parameters to WebSocket for organization lookup
 
 ## Additional Requirements from Enhanced UI Design (August 2025)
 

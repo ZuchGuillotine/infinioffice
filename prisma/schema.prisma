@@ -13,6 +13,7 @@ model Organization {
   name          String
   plan          String    @default("starter")
   smsBranding   String?
+  twilioNumber  String?   @unique @db.VarChar(20) // Assigned Twilio phone number
   createdAt     DateTime  @default(now()) @db.Timestamptz
   updatedAt     DateTime  @updatedAt @db.Timestamptz
   
@@ -48,6 +49,9 @@ model BusinessConfig {
   smsCopy           String?
   greeting          String?
   timezone          String   @default("America/New_York")
+  scripts           Json?    // Custom scripts for different states {greeting, service, timeWindow, contact, confirmation, fallback}
+  rules             Json?    // Booking rules {defaultSlotMinutes, bufferMinutes, allowDoubleBooking}
+  voiceSettings     Json?    // Voice configuration {voiceModel, speed, pitch}
   createdAt         DateTime @default(now()) @db.Timestamptz
   updatedAt         DateTime @updatedAt @db.Timestamptz
   

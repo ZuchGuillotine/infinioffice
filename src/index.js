@@ -29,6 +29,7 @@ const { TTSService } = require('./services/tts');
 const { bookingMachine } = require('./services/stateMachine');
 const { createCall, createTurn, updateTurn, updateCall } = require('./services/db');
 const { performanceMonitor } = require('./services/performance');
+const { OrganizationContextService } = require('./services/organizationContext');
 
 // Import route modules
 const authRoutes = require('./routes/auth');
@@ -84,9 +85,32 @@ fastify.post('/voice', handleIncomingCall);
 
 // WebSocket endpoint for Twilio Media Streams
 fastify.register(async function (fastify) {
-  fastify.get('/', { websocket: true }, (connection, req) => {
+  fastify.get('/', { websocket: true }, async (connection, req) => {
     const ws = connection;
     console.log('Client connected - initializing enhanced booking service');
+
+    // Extract call parameters from query string
+    const toNumber = req.query.to;
+    const fromNumber = req.query.from;
+    const callSid = req.query.callSid;
+    
+    console.log('📞 WebSocket connection for call:', {
+      to: toNumber,
+      from: fromNumber,
+      callSid: callSid
+    });
+
+    // Initialize organization context service and get context
+    const contextService = new OrganizationContextService();
+    let organizationContext = null;
+    
+    if (toNumber) {
+      organizationContext = await contextService.getOrganizationContext(toNumber);
+      console.log('🏢 Loaded organization context for:', organizationContext.organizationName);
+    } else {
+      console.log('⚠️ No toNumber provided, using default context');
+      organizationContext = contextService.getDefaultContext();
+    }
 
     // Initialize services
     const bookingService = interpret(bookingMachine);
@@ -197,16 +221,29 @@ fastify.register(async function (fastify) {
       }, 1000);
     });
 
-    // Send initial greeting
+    // Send initial greeting using organization-specific greeting
     const sendInitialGreeting = async () => {
     try {
-      const initialGreeting = "Hello! I'm here to help you schedule an appointment. How can I assist you today?";
+      // Use organization's custom greeting or fallback to script default
+      const initialGreeting = organizationContext.businessConfig?.greeting || 
+                              organizationContext.businessConfig?.scripts?.greeting ||
+                              "Hello! I'm here to help you schedule an appointment. How can I assist you today?";
       
       ttsService.resetBargeInDetection && ttsService.resetBargeInDetection();
-      const result = await ttsService.generateAndStream(initialGreeting, ws, { streamId: streamSid });
+      
+      // Use organization's voice settings if available
+      const voiceOptions = {
+        streamId: streamSid,
+        model: organizationContext.businessConfig?.voiceSettings?.voiceModel || 'aura-asteria-en',
+        speed: organizationContext.businessConfig?.voiceSettings?.speed || 1.0
+      };
+      
+      const result = await ttsService.generateAndStream(initialGreeting, ws, voiceOptions);
       
       console.log('Initial greeting sent:', {
+        organization: organizationContext.organizationName,
         text: initialGreeting,
+        voiceModel: voiceOptions.model,
         metrics: result.metrics
       });
       
@@ -244,7 +281,10 @@ fastify.register(async function (fastify) {
       const currentSnapshot = bookingService.getSnapshot();
       const contextWithState = { 
         state: currentSnapshot.value || 'idle',
-        ...currentSnapshot.context // Include current booking context
+        ...currentSnapshot.context, // Include current booking context
+        organizationContext: organizationContext, // Include organization-specific context
+        organizationId: organizationContext.organizationId,
+        businessConfig: organizationContext.businessConfig
       };
       
       console.log('📋 Current context being sent to LLM:', {
@@ -505,7 +545,8 @@ fastify.register(async function (fastify) {
               status: 'in_progress',
               startedAt: new Date(),
               currentState: 'greeting',
-              organizationId: process.env.DEFAULT_ORG_ID || '00000000-0000-0000-0000-000000000001'
+              organizationId: organizationContext.organizationId,
+              callerPhone: fromNumber
             });
             callId = call.id;
             console.log('Call tracking initialized:', callId);

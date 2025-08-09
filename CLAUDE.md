@@ -4,21 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Common Commands
 
-### Backend Development
-- `npm install` - Install backend dependencies
-- `npm start` - Start backend server on port 3000 (production)
-- `npm run dev` - Start backend server (development)
+### Development Commands
+- `npm run dev` - Start both backend (port 3001) and frontend (port 5173) concurrently using scripts/dev.sh
+- `npm run dev:backend` - Start only backend server in development mode on port 3001
+- `npm run dev:frontend` - Start only frontend dev server (cd frontend && npm run dev)
+- `npm run dev:ngrok` - Start ngrok tunnel for Twilio webhook testing
+
+### Production Commands
+- `npm run build` - Build entire application using scripts/build.sh
+- `npm run build:frontend` - Build only frontend for production
+- `npm run build:docker` - Build Docker image
+- `npm start` - Start production server on port 3000
+
+### Testing Commands
 - `npm test` - Run all tests using Jest
 - `npm run test:watch` - Run tests in watch mode
-- `npm run test:coverage` - Run tests with coverage report
+- `npm run test:coverage` - Run tests with coverage report (80% threshold)
 - `npm run test:unit` - Run unit tests only
 - `npm run test:integration` - Run integration tests only
 - `npm run test:e2e` - Run end-to-end tests
 - `npm run test:performance` - Run performance tests
 - `npm run test:ci` - Run tests for CI environment
 
-### Frontend Development (in `frontend/` directory)
-- `cd frontend && npm install` - Install frontend dependencies
+### Frontend Commands (in `frontend/` directory)
 - `cd frontend && npm run dev` - Start Vite dev server on port 5173
 - `cd frontend && npm run build` - Build frontend for production
 - `cd frontend && npm run lint` - Run ESLint on frontend code
@@ -133,18 +141,24 @@ This is a full-stack application with:
 - **Database**: PostgreSQL with Prisma ORM
 - **Voice Pipeline**: Real-time WebSocket integration with Twilio Media Streams
 
-### Organization Models
-The database includes multi-tenancy support:
-- `Organization` - Main tenant entity with plans and branding
-- `User` - Organization members with role-based access
-- `BusinessConfig` - Organization-specific settings (hours, services, greeting)
+### Multi-Tenancy & Organization Models
+The database includes comprehensive multi-tenancy support:
+- `Organization` - Main tenant entity with plans, SMS branding, UUID primary keys
+- `User` - Organization members with Google OAuth support and role-based access (admin/operator/viewer)
+- `BusinessConfig` - Organization-specific settings (business hours, holidays, services, providers, escalation, greeting, timezone)
 - `Integration` - Third-party service connections (Google Calendar, etc.)
-- All data is scoped to organizations for proper multi-tenancy
+- `Call`/`Turn`/`Appointment` - All transactional data scoped to organizations
+- Cascade deletion from Organization → User, Call → Turn for data consistency
 
-### Frontend Architecture
-The React frontend includes:
-- Dashboard layout with multiple management pages
-- Onboarding flow for new organizations
-- Configuration editors for business settings
-- Real-time call monitoring and analytics
-- Responsive design with Tailwind CSS components
+### Frontend Architecture & Routes
+The React frontend (`frontend/`) includes:
+- **Authentication**: Login/Register pages with Google OAuth integration
+- **Onboarding Flow**: Multi-step setup (BusinessBasics, Services, SchedulingRules, PhoneNumbers, ScriptComposer, TestCall)
+- **Dashboard Layout**: Comprehensive management interface with:
+  - DashboardHome with metrics and call monitoring
+  - CallsPage for call history and analytics
+  - CalendarPage for appointment management
+  - Configuration pages (Business Info, Services, Scheduling, Voice Script editors)
+  - IntegrationsPage, SettingsPage, ScriptStudioPage, BillingPage
+- **UI Components**: Reusable components (Button, Card, Input, Select, LoadingSpinner, AudioVisualization, StatusIndicator, etc.)
+- **State Management**: React Context for authentication, TanStack Query for API state

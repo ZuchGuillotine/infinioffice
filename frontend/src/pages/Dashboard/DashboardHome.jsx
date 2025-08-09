@@ -63,7 +63,7 @@ export default function DashboardHome() {
           <div className="flex items-center gap-4">
             <StatusIndicator 
               status={liveCall ? 'processing' : 'online'} 
-              latency={metrics.avgLatency}
+              latency={metrics?.avgLatency || 0}
             />
             <Button variant="outline" className="border-green-500/30 hover:border-green-500">
               🟢 Agent Online
@@ -103,36 +103,36 @@ export default function DashboardHome() {
           <>
             <MetricCard
               title="Today's Calls"
-              value={metrics.todayCalls || 0}
-              subvalue={`${metrics.todayChange > 0 ? '+' : ''}${metrics.todayChange || 0} from yesterday`}
-              trend={metrics.todayTrend || 0}
+              value={metrics?.todayCalls || 0}
+              subvalue={`${(metrics?.todayChange || 0) > 0 ? '+' : ''}${metrics?.todayChange || 0} from yesterday`}
+              trend={metrics?.todayTrend || 0}
               icon="📞"
               variant="info"
             />
             
             <MetricCard
               title="Booking Success Rate"
-              value={`${metrics.bookingRate || 0}%`}
-              subvalue={`${metrics.bookingRate >= 85 ? 'Above' : 'Below'} target of 85%`}
-              trend={metrics.bookingTrend || 0}
+              value={`${metrics?.bookingRate || 0}%`}
+              subvalue={`${(metrics?.bookingRate || 0) >= 85 ? 'Above' : 'Below'} target of 85%`}
+              trend={metrics?.bookingTrend || 0}
               icon="🎯"
-              variant={metrics.bookingRate >= 85 ? 'success' : 'warning'}
+              variant={(metrics?.bookingRate || 0) >= 85 ? 'success' : 'warning'}
             />
             
             <MetricCard
               title="Avg Response Time"
-              value={`${((metrics.avgLatency || 0) / 1000).toFixed(1)}s`}
+              value={`${((metrics?.avgLatency || 0) / 1000).toFixed(1)}s`}
               subvalue="Target: <1.5s"
-              trend={metrics.latencyTrend || 0}
+              trend={metrics?.latencyTrend || 0}
               icon="⚡"
-              variant={(metrics.avgLatency || 0) <= 1500 ? 'success' : 'warning'}
+              variant={(metrics?.avgLatency || 0) <= 1500 ? 'success' : 'warning'}
             />
             
             <MetricCard
               title="Est. Revenue"
-              value={`$${(metrics.revenue || 0).toLocaleString()}`}
-              subvalue={`${metrics.revenueChange > 0 ? '+' : ''}$${metrics.revenueChange || 0} today`}
-              trend={metrics.revenueTrend || 0}
+              value={`$${(metrics?.revenue || 0).toLocaleString()}`}
+              subvalue={`${(metrics?.revenueChange || 0) > 0 ? '+' : ''}$${metrics?.revenueChange || 0} today`}
+              trend={metrics?.revenueTrend || 0}
               icon="💰"
               variant="success"
             />

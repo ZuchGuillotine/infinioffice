@@ -13,7 +13,16 @@ const getOpenAIClient = () => {
 
 // Enhanced intent detection system
 const detectIntent = async (transcript, conversationContext = {}) => {
-  const systemPrompt = `You are an intent detection system for appointment booking. Analyze the user's speech and return a JSON response with:
+  // Extract organization-specific services for better intent detection
+  const orgServices = conversationContext.businessConfig?.services || [];
+  const serviceList = orgServices
+    .filter(service => service.active)
+    .map(service => service.name)
+    .join(', ');
+  
+  const orgName = conversationContext.organizationContext?.organizationName || 'our business';
+  
+  const systemPrompt = `You are an intent detection system for appointment booking at ${orgName}. Analyze the user's speech and return a JSON response with:
 {
   "intent": "booking|service_provided|time_provided|contact_provided|confirmation_yes|confirmation_no|affirmative|negative|unclear",
   "confidence": 0.0-1.0,
@@ -25,6 +34,7 @@ const detectIntent = async (transcript, conversationContext = {}) => {
   "rawText": "original transcript"
 }
 
+Available services at this business: ${serviceList || 'General appointments'}
 Current conversation context: ${JSON.stringify(conversationContext)}
 
 Intent definitions:
@@ -40,9 +50,10 @@ Intent definitions:
 
 IMPORTANT: 
 - "Do you have availability for [time]?" should be classified as 'booking' intent, not 'time_provided'.
-- "A perm" or "I want a perm" should be classified as 'service_provided' with service entity "perm"
-- "Definitely trying to get a perm" should be classified as 'service_provided' with service entity "perm"
+- If user mentions any service from the available services list, classify as 'service_provided' and extract the exact service name
+- Match service names flexibly (e.g., "cut" matches "Haircut", "cleaning" matches "Dental Cleaning")
 - If user mentions a service type in any form, classify as 'service_provided' and extract the service
+- For ${orgName}, pay special attention to their specific service offerings
 
 Be strict with confidence scores. Only use >0.7 for very clear intents.`;
 
@@ -89,26 +100,29 @@ Be strict with confidence scores. Only use >0.7 for very clear intents.`;
 
 // Generate contextual responses based on state machine state
 const generateResponse = async (state, context, retryCount = 0) => {
+  // Use organization-specific scripts if available
+  const orgScripts = context.businessConfig?.scripts || {};
+  
   const prompts = {
-    greeting: "Hello! This is the infinioffice after hours agent, I'm here to help you schedule an appointment. What service would you like to book?",
+    greeting: orgScripts.greeting || context.businessConfig?.greeting || "Hello! This is the infinioffice after hours agent, I'm here to help you schedule an appointment. What service would you like to book?",
     
-    service: "What type of service are you looking to schedule today?",
+    service: orgScripts.service || "What type of service are you looking to schedule today?",
     service_after_time: `Great! I see you're looking for availability on ${context.preferredTime || context.timeWindow || 'your preferred date'}. What type of service do you need?`,
     service_retry: retryCount === 1 
       ? "I didn't quite catch that. Could you please tell me what service you need? For example, consultation, maintenance, or repair?"
       : "I'm having trouble understanding the service type. Could you be more specific about what you need help with?",
     
-    timeWindow: `Great! You'd like to book a ${context.service || 'service'}. When would you prefer to schedule this?`,
+    timeWindow: orgScripts.timeWindow || `Great! You'd like to book a ${context.service || 'service'}. When would you prefer to schedule this?`,
     timeWindow_retry: retryCount === 1
       ? "I didn't get the timing. When would work best for you? You can say something like 'tomorrow morning' or 'next Friday at 2pm'."
       : "Let me try again - what day and time would you prefer for your appointment?",
     
-    contact: `Perfect! So that's ${context.service || 'your appointment'} for ${context.timeWindow || context.preferredTime || 'your preferred time'}. Can I get your name and phone number?`,
+    contact: orgScripts.contact || `Perfect! So that's ${context.service || 'your appointment'} for ${context.timeWindow || context.preferredTime || 'your preferred time'}. Can I get your name and phone number?`,
     contact_retry: retryCount === 1
       ? "I need your contact information to complete the booking. Could you please provide your name and phone number?"
       : "I'm sorry, I didn't catch your contact details. Please share your name and phone number.",
     
-    confirmation: `Let me confirm: ${context.service || 'appointment'} for ${context.timeWindow || context.preferredTime || 'your preferred time'}, and I have your contact as ${context.contact}. Is this correct?`,
+    confirmation: orgScripts.confirmation || `Let me confirm: ${context.service || 'appointment'} for ${context.timeWindow || context.preferredTime || 'your preferred time'}, and I have your contact as ${context.contact}. Is this correct?`,
     confirmation_retry: retryCount === 1
       ? "I need to confirm these details are correct before booking. Please say 'yes' if everything looks good, or 'no' if we need to make changes."
       : "Please confirm if these details are correct by saying 'yes' or 'no'.",
@@ -118,14 +132,14 @@ const generateResponse = async (state, context, retryCount = 0) => {
     timeout: "I didn't hear a response. Are you still there?",
     general_timeout: "It seems like we lost connection. Would you like to try scheduling again?",
     
-    fallback: "I'm having trouble completing your booking over the phone. Let me take down your information and someone will call you back within the hour.",
+    fallback: orgScripts.fallback || "I'm having trouble completing your booking over the phone. Let me take down your information and someone will call you back within the hour.",
     
     booking_error: "I'm sorry, there was an issue completing your booking. Let me try that again.",
     
     message_complete: "Thank you! I've taken down your information and someone from our team will contact you within the hour to complete your booking.",
     message_error: "I apologize, but I'm experiencing technical difficulties. Please call back or visit our website to schedule.",
     
-    success: `Excellent! Your ${context.service} appointment is confirmed for ${context.timeWindow}. You'll receive a confirmation message at ${context.contact}. Is there anything else I can help you with?`
+    success: orgScripts.success || `Excellent! Your ${context.service} appointment is confirmed for ${context.timeWindow}. You'll receive a confirmation message at ${context.contact}. Is there anything else I can help you with?`
   };
 
   return prompts[state] || "I'm here to help you schedule an appointment. What can I do for you?";

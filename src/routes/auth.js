@@ -13,6 +13,15 @@ async function authRoutes(fastify, options) {
     const { email, password, organizationName } = request.body;
     
     try {
+      // Check if user already exists
+      const existingUser = await prisma.user.findUnique({
+        where: { email }
+      });
+
+      if (existingUser) {
+        return reply.code(409).send({ error: 'An account with this email already exists' });
+      }
+
       // Create organization first
       const organization = await prisma.organization.create({
         data: {
@@ -39,6 +48,7 @@ async function authRoutes(fastify, options) {
 
       return { token, user, organization };
     } catch (error) {
+      console.error('Registration error:', error);
       reply.code(400).send({ error: error.message });
     }
   });

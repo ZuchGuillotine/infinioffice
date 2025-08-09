@@ -46,8 +46,8 @@ export default function RegisterPage() {
     try {
       const result = await register({
         email: formData.email,
+        password: formData.password,
         organizationName: formData.organizationName
-        // Note: In production, you'd send the password too
       })
       
       if (result.success) {
