@@ -1,42 +1,58 @@
 import { useState, useEffect } from 'react'
+import { useLocation, Link } from 'react-router-dom'
 import { Card, CardContent } from '../../components/ui/Card.jsx'
 import MetricCard from '../../components/ui/MetricCard.jsx'
 import StatusIndicator from '../../components/ui/StatusIndicator.jsx'
 import AudioVisualization from '../../components/ui/AudioVisualization.jsx'
 import Button from '../../components/ui/Button.jsx'
+import LoadingSpinner from '../../components/ui/LoadingSpinner.jsx'
+import { useApi } from '../../hooks/useApi'
+import { dashboard } from '../../lib/api'
 
 export default function DashboardHome() {
+  const location = useLocation()
+  const incompleteSetup = location.state?.incompleteSetup
   const [liveCall, setLiveCall] = useState(false)
-  const [metrics, setMetrics] = useState({
-    todayCalls: 28,
-    avgLatency: 1240,
-    bookingRate: 89,
-    revenue: 2340
-  })
+  
+  // Load real data from API
+  const { data: metrics, loading: metricsLoading, error: metricsError } = useApi(dashboard.getMetrics, []);
+  const { data: recentCalls, loading: callsLoading } = useApi(dashboard.getRecentCalls, []);
+  const { data: todaysBookings, loading: bookingsLoading } = useApi(dashboard.getTodayBookings, []);
 
-  // Simulate live data updates
+  // Live call simulation (keep for demo purposes)
   useEffect(() => {
-    const interval = setInterval(() => {
-      setMetrics(prev => ({
-        ...prev,
-        todayCalls: prev.todayCalls + Math.floor(Math.random() * 2),
-        avgLatency: 1200 + Math.floor(Math.random() * 200),
-        bookingRate: 85 + Math.floor(Math.random() * 10)
-      }))
-    }, 5000)
-
     const callInterval = setInterval(() => {
       setLiveCall(prev => !prev)
     }, 8000)
 
     return () => {
-      clearInterval(interval)
       clearInterval(callInterval)
     }
   }, [])
 
   return (
     <div className="space-y-8">
+      {/* Incomplete Setup Warning */}
+      {incompleteSetup && (
+        <Card className="border-yellow-200 bg-yellow-50/50">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <span className="text-yellow-600 text-xl">⚠️</span>
+              <div className="flex-1">
+                <h3 className="font-semibold text-yellow-800">Setup Incomplete</h3>
+                <p className="text-sm text-yellow-700">
+                  Your AI assistant isn't fully configured yet. Complete the onboarding process to start receiving calls.
+                </p>
+              </div>
+              <Link to="/onboarding">
+                <Button variant="outline" className="border-yellow-300 text-yellow-800 hover:bg-yellow-100">
+                  Complete Setup
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      )}
       {/* Agent Status Header */}
       <div className="glass-strong rounded-xl p-6 border border-primary/20">
         <div className="flex items-center justify-between mb-6">
@@ -68,41 +84,65 @@ export default function DashboardHome() {
 
       {/* Key Metrics Grid */}
       <div className="grid lg:grid-cols-4 md:grid-cols-2 gap-6">
-        <MetricCard
-          title="Today's Calls"
-          value={metrics.todayCalls}
-          subvalue="+3 from yesterday"
-          trend={12}
-          icon="📞"
-          variant="info"
-        />
-        
-        <MetricCard
-          title="Booking Success Rate"
-          value={`${metrics.bookingRate}%`}
-          subvalue="Above target of 85%"
-          trend={4}
-          icon="🎯"
-          variant="success"
-        />
-        
-        <MetricCard
-          title="Avg Response Time"
-          value={`${(metrics.avgLatency / 1000).toFixed(1)}s`}
-          subvalue="Target: <1.5s"
-          trend={-5}
-          icon="⚡"
-          variant={metrics.avgLatency <= 1500 ? 'success' : 'warning'}
-        />
-        
-        <MetricCard
-          title="Revenue Captured"
-          value={`$${metrics.revenue.toLocaleString()}`}
-          subvalue="This month"
-          trend={23}
-          icon="💰"
-          variant="success"
-        />
+        {metricsLoading ? (
+          // Loading state
+          Array.from({length: 4}).map((_, i) => (
+            <Card key={i} className="p-6 animate-pulse">
+              <div className="h-4 bg-muted rounded w-3/4 mb-2"></div>
+              <div className="h-8 bg-muted rounded w-1/2 mb-1"></div>
+              <div className="h-3 bg-muted rounded w-full"></div>
+            </Card>
+          ))
+        ) : metricsError ? (
+          // Error state
+          <Card className="col-span-full p-6 border-red-200">
+            <p className="text-red-600">Failed to load metrics: {metricsError.message}</p>
+          </Card>
+        ) : metrics ? (
+          // Success state with real data
+          <>
+            <MetricCard
+              title="Today's Calls"
+              value={metrics.todayCalls || 0}
+              subvalue={`${metrics.todayChange > 0 ? '+' : ''}${metrics.todayChange || 0} from yesterday`}
+              trend={metrics.todayTrend || 0}
+              icon="📞"
+              variant="info"
+            />
+            
+            <MetricCard
+              title="Booking Success Rate"
+              value={`${metrics.bookingRate || 0}%`}
+              subvalue={`${metrics.bookingRate >= 85 ? 'Above' : 'Below'} target of 85%`}
+              trend={metrics.bookingTrend || 0}
+              icon="🎯"
+              variant={metrics.bookingRate >= 85 ? 'success' : 'warning'}
+            />
+            
+            <MetricCard
+              title="Avg Response Time"
+              value={`${((metrics.avgLatency || 0) / 1000).toFixed(1)}s`}
+              subvalue="Target: <1.5s"
+              trend={metrics.latencyTrend || 0}
+              icon="⚡"
+              variant={(metrics.avgLatency || 0) <= 1500 ? 'success' : 'warning'}
+            />
+            
+            <MetricCard
+              title="Est. Revenue"
+              value={`$${(metrics.revenue || 0).toLocaleString()}`}
+              subvalue={`${metrics.revenueChange > 0 ? '+' : ''}$${metrics.revenueChange || 0} today`}
+              trend={metrics.revenueTrend || 0}
+              icon="💰"
+              variant="success"
+            />
+          </>
+        ) : (
+          // No data state
+          <Card className="col-span-full p-6">
+            <p className="text-muted-foreground">No metrics available</p>
+          </Card>
+        )}
       </div>
 
       {/* Recent Activity */}
@@ -113,7 +153,16 @@ export default function DashboardHome() {
               📊 Recent Call Activity
             </h3>
             <div className="space-y-4">
-              {recentCalls.map((call, i) => (
+              {callsLoading ? (
+                // Loading state for calls
+                Array.from({length: 3}).map((_, i) => (
+                  <div key={i} className="animate-pulse p-3 rounded-lg bg-background/50 border border-border/20">
+                    <div className="h-4 bg-muted rounded w-1/3 mb-2"></div>
+                    <div className="h-3 bg-muted rounded w-2/3"></div>
+                  </div>
+                ))
+              ) : recentCalls?.length ? (
+                recentCalls.map((call, i) => (
                 <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-background/50 border border-border/20">
                   <div className="flex items-center gap-3">
                     <div className={`w-2 h-2 rounded-full ${
@@ -130,7 +179,10 @@ export default function DashboardHome() {
                     <p className="text-xs text-muted-foreground">{call.service}</p>
                   </div>
                 </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-muted-foreground text-center py-8">No recent calls</p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -141,18 +193,30 @@ export default function DashboardHome() {
               📅 Today's Bookings
             </h3>
             <div className="space-y-4">
-              {todaysBookings.map((booking, i) => (
-                <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-primary/5 border border-primary/20">
-                  <div>
-                    <p className="font-medium">{booking.service}</p>
-                    <p className="text-sm text-muted-foreground">{booking.time} with {booking.provider}</p>
+              {bookingsLoading ? (
+                // Loading state for bookings
+                Array.from({length: 3}).map((_, i) => (
+                  <div key={i} className="animate-pulse p-3 rounded-lg bg-primary/5 border border-primary/20">
+                    <div className="h-4 bg-muted rounded w-1/2 mb-2"></div>
+                    <div className="h-3 bg-muted rounded w-3/4"></div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-primary">{booking.customer}</p>
-                    <p className="text-xs text-muted-foreground">{booking.phone}</p>
+                ))
+              ) : todaysBookings?.length ? (
+                todaysBookings.map((booking, i) => (
+                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-primary/5 border border-primary/20">
+                    <div>
+                      <p className="font-medium">{booking.service}</p>
+                      <p className="text-sm text-muted-foreground">{booking.time} with {booking.provider}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-primary">{booking.customer}</p>
+                      <p className="text-xs text-muted-foreground">{booking.phone}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-muted-foreground text-center py-8">No bookings today</p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -186,15 +250,3 @@ export default function DashboardHome() {
   )
 }
 
-const recentCalls = [
-  { phone: '(555) 123-4567', time: '2:34 PM', duration: '3:45', status: 'booked', service: 'HVAC Repair' },
-  { phone: '(555) 987-6543', time: '2:18 PM', duration: '2:12', status: 'callback', service: 'Consultation' },
-  { phone: '(555) 456-7890', time: '1:52 PM', duration: '4:33', status: 'booked', service: 'Emergency Service' },
-  { phone: '(555) 234-5678', time: '1:31 PM', duration: '1:28', status: 'missed', service: 'Quote Request' },
-]
-
-const todaysBookings = [
-  { service: 'AC Repair', time: '3:00 PM', provider: 'Tech A', customer: 'John D.', phone: '(555) 123-4567' },
-  { service: 'Furnace Check', time: '4:30 PM', provider: 'Tech B', customer: 'Sarah M.', phone: '(555) 987-6543' },
-  { service: 'Emergency Call', time: '6:00 PM', provider: 'Tech A', customer: 'Mike R.', phone: '(555) 456-7890' },
-]

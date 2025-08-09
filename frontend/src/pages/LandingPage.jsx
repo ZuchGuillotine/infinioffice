@@ -37,14 +37,14 @@ export default function LandingPage() {
           <Link to="/pricing">
             <Button variant="ghost" className="hover:bg-primary/10">Pricing</Button>
           </Link>
-          <Link to="/onboarding">
-            <Button variant="outline" className="border-primary/30 hover:border-primary hover:bg-primary/10">
-              Get Started
+          <Link to="/auth/login">
+            <Button variant="ghost" className="hover:bg-primary/10">
+              Sign In
             </Button>
           </Link>
-          <Link to="/app">
+          <Link to="/auth/register">
             <Button variant="gradient" className="transition-all duration-300">
-              Sign In
+              Get Started
             </Button>
           </Link>
         </div>
@@ -94,7 +94,7 @@ export default function LandingPage() {
         </div>
         
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
-          <Link to="/onboarding">
+          <Link to="/auth/register">
             <Button size="xl" variant="gradient" className="text-lg px-8 py-4 hover:shadow-xl hover:shadow-primary/30 transition-all duration-500 transform hover:scale-105">
               Start Free Trial →
             </Button>

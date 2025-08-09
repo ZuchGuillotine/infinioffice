@@ -45,7 +45,7 @@ async function authMiddleware(request, reply) {
 
 // Role-based access control middleware
 function requireRole(allowedRoles) {
-  return function(request, reply) {
+  return async function(request, reply) {
     if (!request.user) {
       return reply.code(401).send({ error: 'Authentication required' });
     }
@@ -53,6 +53,10 @@ function requireRole(allowedRoles) {
     if (!allowedRoles.includes(request.user.role)) {
       return reply.code(403).send({ error: 'Insufficient permissions' });
     }
+    
+    // If checks pass, continue to the route handler
+    // In Fastify, returning void means to continue
+    return;
   };
 }
 

@@ -90,7 +90,7 @@ Be strict with confidence scores. Only use >0.7 for very clear intents.`;
 // Generate contextual responses based on state machine state
 const generateResponse = async (state, context, retryCount = 0) => {
   const prompts = {
-    greeting: "Hello! I'm here to help you schedule an appointment. What service would you like to book?",
+    greeting: "Hello! This is the infinioffice after hours agent, I'm here to help you schedule an appointment. What service would you like to book?",
     
     service: "What type of service are you looking to schedule today?",
     service_after_time: `Great! I see you're looking for availability on ${context.preferredTime || context.timeWindow || 'your preferred date'}. What type of service do you need?`,

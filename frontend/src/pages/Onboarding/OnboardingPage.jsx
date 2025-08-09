@@ -31,7 +31,10 @@ export default function OnboardingPage() {
               <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-primary to-accent" />
               <span className="font-bold text-xl">InfiniOffice</span>
             </Link>
-            <Button variant="ghost" onClick={() => navigate('/app')} className="hover:bg-primary/10">
+            <Button variant="ghost" onClick={() => {
+              // Navigate to dashboard with warning that setup is incomplete
+              navigate('/app', { state: { incompleteSetup: true } })
+            }} className="hover:bg-primary/10">
               Skip Setup
             </Button>
           </div>

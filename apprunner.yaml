@@ -1,0 +1,30 @@
+version: 1.0
+runtime: nodejs18
+build:
+  commands:
+    build:
+      - echo "Installing dependencies..."
+      - npm ci
+      - echo "Building frontend..."
+      - npm run build
+      - echo "Build complete"
+run:
+  runtime-version: 18
+  command: npm start
+  network:
+    port: 3000
+    env: PORT
+  env:
+    - name: NODE_ENV
+      value: production
+    - name: PORT  
+      value: 3000
+  # Environment variables will be set through AWS App Runner configuration
+  # - DEEPGRAM_API_KEY
+  # - OPENAI_API_KEY  
+  # - TWILIO_ACCOUNT_SID
+  # - TWILIO_AUTH_TOKEN
+  # - TWILIO_PHONE_NUMBER
+  # - DATABASE_URL
+  # - JWT_SECRET
+  # - GOOGLE_CLIENT_ID (for OAuth)

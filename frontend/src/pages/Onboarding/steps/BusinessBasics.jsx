@@ -39,13 +39,21 @@ export default function BusinessBasics() {
   
   const onSubmit = async (data) => {
     setIsSubmitting(true)
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    
-    setOrg(prev => ({ ...prev, ...data, type: selectedType }))
-    setCompletedSteps(prev => new Set([...prev, 0]))
-    setIsSubmitting(false)
-    navigate('/onboarding/phone')
+    try {
+      // Create organization via API
+      const orgData = { ...data, type: selectedType }
+      
+      // For now, store in context until proper backend integration
+      setOrg(prev => ({ ...prev, ...orgData }))
+      setCompletedSteps(prev => new Set([...prev, 0]))
+      
+      navigate('/onboarding/phone')
+    } catch (error) {
+      console.error('Failed to save business info:', error)
+      // TODO: Show error toast or message
+    } finally {
+      setIsSubmitting(false)
+    }
   }
   
   const handleTypeSelect = (type) => {
@@ -114,6 +122,7 @@ export default function BusinessBasics() {
               placeholder="Acme HVAC & Plumbing" 
               {...register('name', { required: 'Business name is required' })} 
               className={errors.name ? 'border-red-500' : watchedFields.name ? 'border-green-500' : ''}
+              disabled={isSubmitting}
             />
             {errors.name && <p className="text-red-500 text-sm mt-1">{errors.name.message}</p>}
             {watchedFields.name && !errors.name && <p className="text-green-500 text-sm mt-1">✓ Looks good!</p>}
@@ -131,6 +140,7 @@ export default function BusinessBasics() {
                 }
               })} 
               className={errors.phone ? 'border-red-500' : watchedFields.phone ? 'border-green-500' : ''}
+              disabled={isSubmitting}
             />
             {errors.phone && <p className="text-red-500 text-sm mt-1">{errors.phone.message}</p>}
             {watchedFields.phone && !errors.phone && <p className="text-green-500 text-sm mt-1">✓ Valid number!</p>}
@@ -141,6 +151,7 @@ export default function BusinessBasics() {
             <select 
               {...register('timezone')} 
               className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              disabled={isSubmitting}
             >
               {timezones.map(tz => (
                 <option key={tz} value={tz}>{tz.replace('_', ' ')}</option>

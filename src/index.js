@@ -1,6 +1,10 @@
 require('dotenv').config();
 
-const fastify = require('fastify')({ logger: true });
+const path = require('path');
+const fastify = require('fastify')({ 
+  logger: process.env.NODE_ENV === 'development',
+  trustProxy: true 
+});
 const WebSocket = require('ws');
 const { interpret } = require('xstate');
 
@@ -30,14 +34,50 @@ const { performanceMonitor } = require('./services/performance');
 const authRoutes = require('./routes/auth');
 const organizationRoutes = require('./routes/organizations');
 const callRoutes = require('./routes/calls');
+const dashboardRoutes = require('./routes/dashboard');
+const userRoutes = require('./routes/user');
+const servicesRoutes = require('./routes/services');
+const onboardingRoutes = require('./routes/onboarding');
+const voiceRoutes = require('./routes/voice');
+
+// Import middleware
+const { authMiddleware } = require('./middleware/auth');
+
+// Register CORS support
+fastify.register(require('@fastify/cors'), {
+  origin: process.env.NODE_ENV === 'production' 
+    ? [process.env.FRONTEND_URL || 'https://your-domain.com']
+    : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+});
+
+// Register static file serving for production
+if (process.env.NODE_ENV === 'production') {
+  fastify.register(require('@fastify/static'), {
+    root: path.join(__dirname, '..', 'frontend', 'dist'),
+    prefix: '/', // optional: default '/'
+  });
+}
 
 // Register WebSocket support
 fastify.register(require('@fastify/websocket'));
 
-// Register API routes
+// Register API routes (auth routes don't need auth middleware)
 fastify.register(authRoutes, { prefix: '/api/auth' });
-fastify.register(organizationRoutes, { prefix: '/api/organizations' });
-fastify.register(callRoutes, { prefix: '/api/calls' });
+
+// Register protected API routes with auth middleware
+fastify.register(async function (fastify) {
+  fastify.addHook('preHandler', authMiddleware);
+  
+  await fastify.register(organizationRoutes, { prefix: '/api/organizations' });
+  await fastify.register(callRoutes, { prefix: '/api/calls' });
+  await fastify.register(dashboardRoutes, { prefix: '/api/dashboard' });
+  await fastify.register(userRoutes, { prefix: '/api/user' });
+  await fastify.register(servicesRoutes, { prefix: '/api/services' });
+  await fastify.register(onboardingRoutes, { prefix: '/api/onboarding' });
+  await fastify.register(voiceRoutes, { prefix: '/api/voice' });
+});
 
 // Voice webhook endpoint
 fastify.post('/voice', handleIncomingCall);
@@ -594,9 +634,30 @@ fastify.get('/health', async (request, reply) => {
   };
 });
 
+// Serve React app for all non-API routes in production
+if (process.env.NODE_ENV === 'production') {
+  fastify.get('/*', async (request, reply) => {
+    // Skip API and static asset routes
+    if (request.url.startsWith('/api/') || 
+        request.url.startsWith('/voice') || 
+        request.url.startsWith('/health') || 
+        request.url.startsWith('/metrics') ||
+        request.url.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
+      return;
+    }
+    
+    return reply.sendFile('index.html');
+  });
+}
+
 const start = async () => {
   try {
-    await fastify.listen({ port: 3000 });
+    const port = process.env.PORT || 3000;
+    const host = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
+    
+    await fastify.listen({ port, host });
+    console.log(`🚀 InfiniOffice Server running on ${host}:${port}`);
+    console.log(`📱 Twilio webhook: ${process.env.NODE_ENV === 'production' ? 'https://your-domain.com' : `http://localhost:${port}`}/voice`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
