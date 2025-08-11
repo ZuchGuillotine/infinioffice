@@ -177,6 +177,7 @@ const bookingMachine = createMachine({
           actions: assign({
             serviceValidated: true,
             fallbackReason: null,
+            retryCount: 0, // Reset retry count on successful validation
           }),
           target: 'bookingFlow',
         },
@@ -188,6 +189,7 @@ const bookingMachine = createMachine({
           target: 'scheduleCallback',
         },
         {
+          // Give more attempts before giving up
           actions: assign({
             serviceValidated: false,
             retryCount: ({ context }) => (context.retryCount || 0) + 1,
@@ -394,10 +396,19 @@ const bookingMachine = createMachine({
     },
     shouldFallbackToCallback: ({ context, event }) => {
       // Check if we should fallback to callback scheduling
-      const invalidService = context.service && !context.serviceValidated;
+      // Only fallback after significant attempts have been made
+      const multipleRetries = (context.retryCount || 0) >= 5; // Increased from 3 to 5
+      const persistentServiceIssue = context.service && context.serviceValidated === false && (context.retryCount || 0) >= 3;
       const calendarFailure = context.calendarError || context.integrationFailure;
-      const multipleRetries = (context.retryCount || 0) >= 3;
-      return invalidService || calendarFailure || multipleRetries;
+      
+      // Don't fallback immediately on first service validation failure
+      const shouldFallback = multipleRetries || persistentServiceIssue || calendarFailure;
+      
+      if (shouldFallback) {
+        console.log(`🔄 Triggering fallback: retries=${context.retryCount}, service=${context.service}, validated=${context.serviceValidated}, calendarError=${context.calendarError}`);
+      }
+      
+      return shouldFallback;
     },
   },
   actions: {
@@ -539,7 +550,7 @@ const addHour = (date) => {
   return newDate;
 };
 
-// Service validation function
+// Enhanced service validation function with more flexible matching
 const validateService = (requestedService, businessConfig) => {
   if (!requestedService || !businessConfig) {
     console.log('🚫 Service validation failed: Missing service or business config');
@@ -554,28 +565,76 @@ const validateService = (requestedService, businessConfig) => {
     return false;
   }
 
+  // Clean the requested service for better matching
+  const cleanRequested = requestedService.toLowerCase().trim();
+  
   // Exact match first
   const exactMatch = activeServices.find(service => 
-    service.name.toLowerCase() === requestedService.toLowerCase()
+    service.name.toLowerCase().trim() === cleanRequested
   );
   
   if (exactMatch) {
-    console.log(`✅ Service validation passed: Exact match found for "${requestedService}"`);
+    console.log(`✅ Service validation passed: Exact match found for "${requestedService}" -> "${exactMatch.name}"`);
     return true;
   }
 
-  // Fuzzy matching for common variations
+  // Enhanced fuzzy matching with more patterns
   const fuzzyMatch = activeServices.find(service => {
-    const serviceName = service.name.toLowerCase();
-    const requested = requestedService.toLowerCase();
+    const serviceName = service.name.toLowerCase().trim();
     
-    // Check if requested service is contained in the service name or vice versa
-    return serviceName.includes(requested) || requested.includes(serviceName) ||
-           // Check for common abbreviations/variations
-           (serviceName.includes('consultation') && requested.includes('consult')) ||
-           (serviceName.includes('haircut') && (requested.includes('cut') || requested.includes('hair'))) ||
-           (serviceName.includes('cleaning') && requested.includes('clean')) ||
-           (serviceName.includes('repair') && requested.includes('fix'));
+    // Direct substring matches
+    if (serviceName.includes(cleanRequested) || cleanRequested.includes(serviceName)) {
+      return true;
+    }
+    
+    // Common word matching patterns
+    const serviceWords = serviceName.split(/\s+/);
+    const requestedWords = cleanRequested.split(/\s+/);
+    
+    // Check if any significant word matches
+    for (const reqWord of requestedWords) {
+      if (reqWord.length > 2) { // Skip small words like 'a', 'an', 'the'
+        for (const serviceWord of serviceWords) {
+          if (serviceWord.includes(reqWord) || reqWord.includes(serviceWord)) {
+            return true;
+          }
+        }
+      }
+    }
+    
+    // Extended pattern matching for common service variations
+    const patterns = [
+      // Hair services
+      { service: 'haircut', matches: ['cut', 'hair', 'trim', 'style'] },
+      { service: 'hair', matches: ['haircut', 'cut', 'style', 'trim'] },
+      
+      // Consultation variations
+      { service: 'consultation', matches: ['consult', 'meeting', 'appointment', 'session'] },
+      { service: 'consult', matches: ['consultation', 'meeting', 'session'] },
+      
+      // Cleaning variations  
+      { service: 'cleaning', matches: ['clean', 'wash', 'sanitize'] },
+      { service: 'clean', matches: ['cleaning', 'wash'] },
+      
+      // Repair variations
+      { service: 'repair', matches: ['fix', 'service', 'maintenance'] },
+      { service: 'fix', matches: ['repair', 'service'] },
+      
+      // Medical/dental
+      { service: 'checkup', matches: ['check', 'exam', 'examination'] },
+      { service: 'exam', matches: ['checkup', 'check', 'examination'] },
+    ];
+    
+    for (const pattern of patterns) {
+      if (serviceName.includes(pattern.service) && pattern.matches.some(match => cleanRequested.includes(match))) {
+        return true;
+      }
+      if (cleanRequested.includes(pattern.service) && pattern.matches.some(match => serviceName.includes(match))) {
+        return true;
+      }
+    }
+    
+    return false;
   });
 
   if (fuzzyMatch) {
@@ -585,6 +644,7 @@ const validateService = (requestedService, businessConfig) => {
 
   console.log(`🚫 Service validation failed: No match found for "${requestedService}"`);
   console.log(`Available services: ${activeServices.map(s => s.name).join(', ')}`);
+  console.log(`Tried to match against: ${activeServices.map(s => s.name.toLowerCase().trim()).join(', ')}`);
   return false;
 };
 

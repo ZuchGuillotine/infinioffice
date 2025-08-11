@@ -120,6 +120,9 @@ class APIClient {
     deleteIntegration: (type) => this.delete(`/organizations/integrations/${type}`),
     updateOnboardingProgress: (data) => this.put('/organizations/onboarding-progress', data),
     getSetupStatus: () => this.get('/organizations/setup-status'),
+    // Calendar endpoints
+    getCalendarEvents: () => this.get('/organizations/calendar/events'),
+    getCalendarAvailability: (params) => this.get('/organizations/calendar/availability', params),
   };
 
   // Dashboard endpoints

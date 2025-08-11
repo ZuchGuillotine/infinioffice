@@ -22,7 +22,7 @@ fastify.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'st
   }
 });
 
-const { handleIncomingCall } = require('./services/telephony');
+const { handleIncomingCall, callStore } = require('./services/telephony');
 const { STTService } = require('./services/stt');
 const { processMessage, sessionManager, getCompletion } = require('./services/llm');
 const { TTSService } = require('./services/tts');
@@ -89,28 +89,25 @@ fastify.register(async function (fastify) {
     const ws = connection;
     console.log('Client connected - initializing enhanced booking service');
 
-    // Extract call parameters from query string
-    const toNumber = req.query.to;
-    const fromNumber = req.query.from;
-    const callSid = req.query.callSid;
+    // Call parameters will be extracted from Twilio 'start' event data
+    let toNumber = null;
+    let fromNumber = null;
+    let callSid = null;
     
-    console.log('📞 WebSocket connection for call:', {
-      to: toNumber,
-      from: fromNumber,
-      callSid: callSid
+    console.log('📞 WebSocket connection established - waiting for Twilio start event to get call parameters');
+    console.log('🔍 Request URL:', req.url);
+    console.log('🔍 Request headers:', {
+      host: req.headers.host,
+      'x-forwarded-host': req.headers['x-forwarded-host'],
+      'x-forwarded-proto': req.headers['x-forwarded-proto']
     });
 
-    // Initialize organization context service and get context
+    // Initialize organization context service
     const contextService = new OrganizationContextService();
     let organizationContext = null;
     
-    if (toNumber) {
-      organizationContext = await contextService.getOrganizationContext(toNumber);
-      console.log('🏢 Loaded organization context for:', organizationContext.organizationName);
-    } else {
-      console.log('⚠️ No toNumber provided, using default context');
-      organizationContext = contextService.getDefaultContext();
-    }
+    // Organization context will be loaded when we receive the Twilio start event
+    console.log('⏳ Organization context will be loaded when Twilio start event is received...');
 
     // Initialize services
     const bookingService = interpret(bookingMachine);
@@ -163,9 +160,9 @@ fastify.register(async function (fastify) {
     sttService.on('ready', () => {
       console.log('STT service ready');
       sttReady = true;
-      // Only send greeting if both STT is ready and stream has started, and greeting hasn't been sent yet
-      if (streamStarted && sttReady && !greetingSent) {
-        console.log('Both STT ready and stream started - sending initial greeting');
+      // Only send greeting if STT is ready, stream has started, organization context is loaded, and greeting hasn't been sent yet
+      if (streamStarted && sttReady && organizationContext && !greetingSent) {
+        console.log('STT ready, stream started, and organization context loaded - sending initial greeting');
         greetingSent = true;
         setTimeout(sendInitialGreeting, 500); // Small delay to ensure connection stability
       }
@@ -554,9 +551,51 @@ fastify.register(async function (fastify) {
 
       if (data.event === 'start') {
         streamSid = data.start.streamSid;
-        const callSid = data.start.callSid;
+        callSid = data.start.callSid;
         
-        console.log('Twilio stream started:', { streamSid, callSid });
+        // Extract call parameters from Twilio stream parameters
+        const streamParameters = data.start.customParameters || {};
+        toNumber = streamParameters.to;
+        fromNumber = streamParameters.from;
+        
+        console.log('Twilio stream started:', { streamSid, callSid, toNumber, fromNumber });
+        console.log('📋 Full start event data:', JSON.stringify(data.start, null, 2));
+        console.log('📋 Stream custom parameters:', streamParameters);
+        
+        // Fallback: if custom parameters didn't work, try the callStore
+        if (!toNumber && callSid && callStore.has(callSid)) {
+          const storedCallData = callStore.get(callSid);
+          toNumber = storedCallData.to;
+          fromNumber = storedCallData.from;
+          console.log('📋 Retrieved call parameters from callStore:', storedCallData);
+          
+          // Clean up the stored data
+          callStore.delete(callSid);
+        }
+        
+        // Now that we have the phone number, load the organization context
+        if (toNumber) {
+          try {
+            organizationContext = await contextService.getOrganizationContext(toNumber);
+            console.log('🏢 Loaded organization context for:', organizationContext.organizationName, '- Phone:', toNumber);
+            console.log('🏢 Organization services available:', organizationContext.businessConfig?.services?.length || 0);
+            
+            // Log the organization context for debugging
+            if (organizationContext?.businessConfig) {
+              console.log('🏢 Business config loaded:', {
+                services: organizationContext.businessConfig.services?.map(s => ({ name: s.name, active: s.active })) || [],
+                greeting: organizationContext.businessConfig.greeting ? 'Custom greeting set' : 'Using default greeting',
+                scripts: Object.keys(organizationContext.businessConfig.scripts || {}).join(', ') || 'None'
+              });
+            }
+          } catch (error) {
+            console.error('⚠️ Failed to load organization context for', toNumber, ':', error.message);
+            organizationContext = contextService.getDefaultContext();
+          }
+        } else {
+          console.log('⚠️ No toNumber provided in stream parameters, using default context');
+          organizationContext = contextService.getDefaultContext();
+        }
         
         // Initialize call tracking
         /* if (callSid && !callId) {
@@ -582,10 +621,11 @@ fastify.register(async function (fastify) {
         streamStarted = true;
         sttService.startListening();
 
-        // Send greeting once both stream is started and STT is ready
-        if (sttReady && streamStarted) {
-          console.log('Stream started and STT already ready - initial greeting will be handled by ready event');
-          // Don't send greeting here since it's already handled in the ready event handler
+        // Send greeting now that we have organization context and stream is started
+        if (sttReady && streamStarted && organizationContext && !greetingSent) {
+          console.log('Stream started, STT ready, and organization context loaded - sending initial greeting');
+          greetingSent = true;
+          setTimeout(sendInitialGreeting, 500); // Small delay to ensure connection stability
         }
         
       } else if (data.event === 'media') {

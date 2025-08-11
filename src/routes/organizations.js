@@ -113,6 +113,13 @@ async function organizationRoutes(fastify, options) {
         }
       });
 
+      // IMPORTANT: Invalidate organization cache when business config changes
+      const { OrganizationContextService } = require('../services/organizationContext');
+      const contextService = new OrganizationContextService();
+      await contextService.invalidateOrganizationCache(organizationId);
+
+      fastify.log.info(`Business configuration updated for organization: ${organizationId}`);
+
       return config;
     } catch (error) {
       reply.code(500).send({ error: error.message });
@@ -249,37 +256,66 @@ async function organizationRoutes(fastify, options) {
       speechRate,
       volume,
       confirmationPrompts,
-      fallbackResponses
+      fallbackResponses,
+      scripts  // Add scripts support
     } = request.body;
     
     try {
-      // Update business config with voice settings
+      // Update business config with voice settings and scripts
       const config = await prisma.businessConfig.upsert({
         where: { organizationId },
         update: {
           greeting,
           escalationNumber,
-          smsCopy
-          // Note: voiceModel, speechRate, volume, etc. would need additional fields in schema
-          // For now, we'll store core voice settings in the existing fields
+          smsCopy,
+          scripts: scripts || undefined, // Store custom scripts
+          voiceSettings: {
+            voiceModel: voiceModel || 'aura-asteria-en',
+            speed: speechRate || 1.0,
+            pitch: volume || 0.8,
+            confirmationPrompts: confirmationPrompts || {},
+            fallbackResponses: fallbackResponses || {}
+          }
         },
         create: {
           organizationId,
           greeting: greeting || "Hello! Thank you for calling. I'm here to help you schedule an appointment. How can I assist you today?",
           escalationNumber,
-          smsCopy: smsCopy || "Thank you for calling! We'll send you a confirmation via text message."
+          smsCopy: smsCopy || "Thank you for calling! We'll send you a confirmation via text message.",
+          scripts: scripts || {
+            greeting: greeting || "Hello! Thank you for calling. I'm here to help you schedule an appointment. How can I assist you today?",
+            service: "What type of service are you looking to schedule today?",
+            timeWindow: "When would you prefer to schedule this appointment?",
+            contact: "Can I get your name and phone number to complete the booking?",
+            confirmation: "Let me confirm your appointment details...",
+            fallback: "I apologize, but I'm having trouble understanding. Let me connect you with someone who can help.",
+            success: "Your appointment has been successfully scheduled! You'll receive a confirmation shortly."
+          },
+          voiceSettings: {
+            voiceModel: voiceModel || 'aura-asteria-en',
+            speed: speechRate || 1.0,
+            pitch: volume || 0.8
+          }
         }
       });
+
+      // IMPORTANT: Invalidate the organization context cache so changes are picked up immediately
+      const { OrganizationContextService } = require('../services/organizationContext');
+      const contextService = new OrganizationContextService();
+      await contextService.invalidateOrganizationCache(organizationId);
+
+      fastify.log.info(`Voice configuration updated for organization: ${organizationId}`);
 
       return {
         greeting: config.greeting,
         escalationNumber: config.escalationNumber,
         smsCopy: config.smsCopy,
-        voiceModel: voiceModel || 'aura-asteria-en',
-        speechRate: speechRate || 1.0,
-        volume: volume || 0.8,
-        confirmationPrompts: confirmationPrompts || {},
-        fallbackResponses: fallbackResponses || {},
+        scripts: config.scripts,
+        voiceModel: config.voiceSettings?.voiceModel || voiceModel || 'aura-asteria-en',
+        speechRate: config.voiceSettings?.speed || speechRate || 1.0,
+        volume: config.voiceSettings?.pitch || volume || 0.8,
+        confirmationPrompts: config.voiceSettings?.confirmationPrompts || confirmationPrompts || {},
+        fallbackResponses: config.voiceSettings?.fallbackResponses || fallbackResponses || {},
         updatedAt: config.updatedAt
       };
     } catch (error) {
@@ -492,6 +528,142 @@ async function organizationRoutes(fastify, options) {
     } catch (error) {
       fastify.log.error('Error fetching setup status:', error);
       reply.code(500).send({ error: error.message });
+    }
+  });
+
+  // Get calendar events for the organization
+  fastify.get('/calendar/events', async (request, reply) => {
+    try {
+      const { organizationId } = request.user;
+      
+      // Get active calendar integrations
+      const integrations = await prisma.integration.findMany({
+        where: {
+          organizationId,
+          type: { in: ['google-calendar', 'outlook-calendar', 'apple-calendar'] },
+          status: 'active'
+        }
+      });
+
+      if (integrations.length === 0) {
+        return reply.code(404).send({ 
+          error: 'No active calendar integrations found',
+          message: 'Please connect a calendar integration first'
+        });
+      }
+
+      const allEvents = [];
+      
+      // Fetch events from each connected calendar
+      for (const integration of integrations) {
+        try {
+          if (integration.type === 'google-calendar' && integration.oauthTokens) {
+            const GoogleCalendarService = require('../services/googleCalendar');
+            
+            // Get primary calendar events
+            const events = await GoogleCalendarService.getEvents(
+              integration.oauthTokens, 
+              'primary', 
+              90 // Next 90 days
+            );
+            
+            allEvents.push(...events.map(event => ({
+              ...event,
+              source: 'google-calendar',
+              integrationId: integration.id
+            })));
+          }
+          // Add support for other calendar types here
+        } catch (error) {
+          console.error(`Error fetching events from ${integration.type}:`, error);
+          // Continue with other integrations even if one fails
+        }
+      }
+
+      // Sort all events by start time
+      allEvents.sort((a, b) => new Date(a.start) - new Date(b.start));
+
+      return {
+        success: true,
+        events: allEvents,
+        total: allEvents.length,
+        integrations: integrations.map(i => ({ type: i.type, status: i.status }))
+      };
+    } catch (error) {
+      console.error('Error fetching calendar events:', error);
+      return reply.code(500).send({ 
+        error: 'Failed to fetch calendar events',
+        message: error.message 
+      });
+    }
+  });
+
+  // Get calendar availability for scheduling
+  fastify.get('/calendar/availability', async (request, reply) => {
+    try {
+      const { organizationId } = request.user;
+      const { startDate, endDate, duration = 60 } = request.query;
+      
+      if (!startDate || !endDate) {
+        return reply.code(400).send({ 
+          error: 'Start date and end date are required' 
+        });
+      }
+
+      // Get active calendar integrations
+      const integrations = await prisma.integration.findMany({
+        where: {
+          organizationId,
+          type: { in: ['google-calendar', 'outlook-calendar', 'apple-calendar'] },
+          status: 'active'
+        }
+      });
+
+      if (integrations.length === 0) {
+        return reply.code(404).send({ 
+          error: 'No active calendar integrations found' 
+        });
+      }
+
+      const availability = [];
+      
+      // Check availability across all connected calendars
+      for (const integration of integrations) {
+        try {
+          if (integration.type === 'google-calendar' && integration.oauthTokens) {
+            const GoogleCalendarService = require('../services/googleCalendar');
+            
+            const availableSlots = await GoogleCalendarService.getAvailableSlots(
+              integration.oauthTokens,
+              'primary',
+              startDate,
+              endDate,
+              parseInt(duration)
+            );
+            
+            availability.push(...availableSlots.map(slot => ({
+              ...slot,
+              source: 'google-calendar',
+              integrationId: integration.id
+            })));
+          }
+        } catch (error) {
+          console.error(`Error checking availability for ${integration.type}:`, error);
+        }
+      }
+
+      return {
+        success: true,
+        availability,
+        total: availability.length,
+        requestedDuration: duration
+      };
+    } catch (error) {
+      console.error('Error checking calendar availability:', error);
+      return reply.code(500).send({ 
+        error: 'Failed to check calendar availability',
+        message: error.message 
+      });
     }
   });
 }

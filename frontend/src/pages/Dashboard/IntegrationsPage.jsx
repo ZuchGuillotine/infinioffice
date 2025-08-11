@@ -81,7 +81,12 @@ export default function IntegrationsPage() {
     } else if (integrationType === 'pipedrive') {
       // Trigger Pipedrive OAuth flow
       window.location.href = `/api/auth/pipedrive?organizationId=${user.organizationId}`
+    } else if (integrationType === 'apple-calendar' || integrationType === 'outlook-calendar') {
+      // These integrations are not yet implemented
+      setErrorMessage(`${integrationType === 'apple-calendar' ? 'Apple Calendar' : 'Outlook Calendar'} integration is coming soon! We're working on implementing secure calendar sync for these platforms.`)
+      setConnectingType(null)
     } else {
+      // For any other integrations, create them normally
       createIntegration({ type: integrationType })
     }
   }
@@ -139,7 +144,7 @@ export default function IntegrationsPage() {
     { 
       type: 'outlook-calendar', 
       name: 'Outlook Calendar', 
-      description: 'Sync appointments with Outlook and Microsoft 365',
+      description: 'Sync appointments with Outlook and Microsoft 365 (Coming Soon)',
       category: 'calendar',
       icon: '📆',
       features: ['Office 365 integration', 'Exchange support', 'Team calendar sync', 'Meeting scheduling'],
@@ -148,7 +153,7 @@ export default function IntegrationsPage() {
     { 
       type: 'apple-calendar', 
       name: 'Apple Calendar', 
-      description: 'Sync with Apple Calendar and iCloud',
+      description: 'Sync with Apple Calendar and iCloud (Coming Soon)',
       category: 'calendar',
       icon: '🍎',
       features: ['iCloud sync', 'iOS integration', 'Family sharing', 'Siri integration'],
@@ -237,9 +242,10 @@ export default function IntegrationsPage() {
           {calendarIntegrations.map(integration => {
             const isConnected = integrations?.some(i => i.type === integration.type && i.status === 'active')
             const isConnecting = connectingType === integration.type
+            const isComingSoon = integration.type === 'apple-calendar' || integration.type === 'outlook-calendar'
             
             return (
-              <Card key={integration.type} className="hover:shadow-lg transition-shadow">
+              <Card key={integration.type} className={`hover:shadow-lg transition-shadow ${isComingSoon ? 'opacity-75' : ''}`}>
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
@@ -247,11 +253,13 @@ export default function IntegrationsPage() {
                       <div>
                         <CardTitle className="text-lg">{integration.name}</CardTitle>
                         <div className={`px-2 py-1 rounded-full text-xs w-fit ${
-                          isConnected 
+                          isComingSoon 
+                            ? 'bg-yellow-100 text-yellow-800' 
+                            : isConnected 
                             ? 'bg-green-100 text-green-800' 
                             : 'bg-gray-100 text-gray-600'
                         }`}>
-                          {isConnected ? 'Connected' : 'Not connected'}
+                          {isComingSoon ? 'Coming Soon' : (isConnected ? 'Connected' : 'Not connected')}
                         </div>
                       </div>
                     </div>
@@ -279,7 +287,15 @@ export default function IntegrationsPage() {
                   </div>
 
                   <div className="flex gap-2">
-                    {isConnected ? (
+                    {isComingSoon ? (
+                      <Button 
+                        size="sm"
+                        disabled
+                        className="w-full bg-yellow-100 text-yellow-800 border-yellow-200 cursor-not-allowed"
+                      >
+                        Coming Soon
+                      </Button>
+                    ) : isConnected ? (
                       <Button 
                         variant="outline" 
                         size="sm"

@@ -102,23 +102,21 @@ async function createASRConnection(callId) {
 }
 ```
 
-#### AWS Polly TTS Configuration
+#### Deepgram TTS Configuration
 ```javascript
-const { PollyClient, SynthesizeSpeechCommand } = require('@aws-sdk/client-polly');
-const polly = new PollyClient({ region: 'us-east-1' });
+const { createClient } = require('@deepgram/sdk');
+const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
-async function synthesizeSpeech(text, voiceId = 'Joanna') {
-  const command = new SynthesizeSpeechCommand({
-    Text: `<speak>${text}</speak>`,
-    TextType: 'ssml',
-    OutputFormat: 'pcm',
-    SampleRate: '8000', // Phone quality
-    VoiceId: voiceId,
-    Engine: 'neural'
-  });
+async function synthesizeSpeech(text, model = 'aura-asteria-en') {
+  const config = {
+    model: model,
+    encoding: 'mulaw',
+    sample_rate: 8000, // Phone quality
+    container: 'none'  // Streaming
+  };
   
-  const response = await polly.send(command);
-  return response.AudioStream;
+  const response = await deepgram.speak.request({ text }, config);
+  return response.getStream();
 }
 
 // Cache common phrases
@@ -441,7 +439,7 @@ function calculateCallCost(callData) {
     twilio: callData.duration * 0.0085 / 60,
     deepgram: callData.duration * 0.0043 / 60,
     openai: callData.tokens * 0.002 / 1000,
-    polly: callData.ttsCharacters * 0.000016
+    deepgram_tts: callData.ttsCharacters * 0.000016
   };
   
   return Object.values(costs).reduce((a, b) => a + b, 0);
@@ -480,7 +478,7 @@ function calculateCallCost(callData) {
 | Twilio PSTN | $0.04 | $0.0085/min |
 | Deepgram ASR | $0.02 | $0.0043/min |
 | GPT-3.5 | $0.01 | ~2K tokens |
-| AWS Polly TTS | $0.04 | ~2.5 min speech |
+| Deepgram TTS | $0.04 | ~2.5 min speech |
 | Infrastructure | $0.02 | AWS costs |
 | **Total** | **$0.13** | 88% margin at $1.20/call |
 

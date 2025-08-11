@@ -29,8 +29,12 @@ class OrganizationContextService {
     try {
       console.log('🔍 Looking up organization for phone number:', phoneNumber);
       
-      const organization = await prisma.organization.findUnique({
-        where: { twilioNumber: phoneNumber },
+      // Normalize phone number to E.164 format for consistent lookup
+      const normalizedNumber = this.normalizePhoneNumber(phoneNumber);
+      console.log('📱 Normalized phone number:', phoneNumber, '->', normalizedNumber);
+      
+      let organization = await prisma.organization.findUnique({
+        where: { twilioNumber: normalizedNumber },
         include: {
           businessConfig: true,
           integrations: {
@@ -39,8 +43,55 @@ class OrganizationContextService {
         }
       });
 
+      // If still not found, try alternative formats
+      if (!organization && phoneNumber !== normalizedNumber) {
+        console.log('🔄 Trying original format lookup for:', phoneNumber);
+        organization = await prisma.organization.findUnique({
+          where: { twilioNumber: phoneNumber },
+          include: {
+            businessConfig: true,
+            integrations: {
+              where: { status: 'active' }
+            }
+          }
+        });
+      }
+
+      // If still not found, try finding organizations and match any format
       if (!organization) {
-        console.log('⚠️ No organization found for phone number:', phoneNumber, 'using default context');
+        console.log('🔄 Performing fallback lookup for any matching phone number format');
+        const allOrganizations = await prisma.organization.findMany({
+          where: { 
+            twilioNumber: { not: null }
+          },
+          include: {
+            businessConfig: true,
+            integrations: {
+              where: { status: 'active' }
+            }
+          }
+        });
+
+        // Try to match any stored number format with the incoming number
+        organization = allOrganizations.find(org => {
+          if (!org.twilioNumber) return false;
+          
+          try {
+            const storedNormalized = this.normalizePhoneNumber(org.twilioNumber);
+            return storedNormalized === normalizedNumber;
+          } catch (error) {
+            console.warn('⚠️ Could not normalize stored number:', org.twilioNumber);
+            return false;
+          }
+        });
+
+        if (organization) {
+          console.log('✅ Found organization via fallback matching:', organization.name, organization.twilioNumber);
+        }
+      }
+
+      if (!organization) {
+        console.log('⚠️ No organization found for phone number:', phoneNumber, '(normalized:', normalizedNumber, ') - using default context');
         return this.getDefaultContext();
       }
 
@@ -222,6 +273,69 @@ ESCALATION: ${businessConfig?.escalationNumber ? `Transfer to ${businessConfig.e
   clearCache() {
     this.contextCache.clear();
     console.log('🗑️ Cleared all organization context cache');
+  }
+
+  /**
+   * Normalize phone number to E.164 format (+1XXXXXXXXXX)
+   * @param {string} phoneNumber - Phone number in any format
+   * @returns {string} - Normalized E.164 format
+   */
+  normalizePhoneNumber(phoneNumber) {
+    if (!phoneNumber) {
+      throw new Error('Phone number is required');
+    }
+
+    // Remove all non-digit characters
+    const digits = phoneNumber.replace(/\D/g, '');
+    
+    // Handle different US number formats
+    if (digits.length === 10) {
+      // 10 digits: assume US number, add country code
+      return `+1${digits}`;
+    } else if (digits.length === 11 && digits.startsWith('1')) {
+      // 11 digits starting with 1: US number with country code
+      return `+${digits}`;
+    } else if (phoneNumber.startsWith('+') && digits.length === 11 && digits.startsWith('1')) {
+      // Already in +1XXXXXXXXXX format
+      return phoneNumber;
+    } else {
+      throw new Error(`Cannot normalize phone number format: ${phoneNumber} (${digits.length} digits)`);
+    }
+  }
+
+  /**
+   * Invalidate organization cache when scripts/services are updated
+   * This should be called after any organization configuration changes
+   * @param {string} organizationId - Organization ID to invalidate
+   */
+  async invalidateOrganizationCache(organizationId) {
+    try {
+      // Find the organization to get its phone number
+      const organization = await prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { twilioNumber: true }
+      });
+
+      if (organization?.twilioNumber) {
+        // Delete all cache entries that could match this phone number
+        const phoneVariants = [
+          organization.twilioNumber,
+          this.normalizePhoneNumber(organization.twilioNumber)
+        ];
+
+        for (const variant of phoneVariants) {
+          this.contextCache.delete(variant);
+        }
+
+        console.log('🗑️ Invalidated organization cache for:', organizationId, 'phone variants:', phoneVariants);
+      } else {
+        console.log('⚠️ Could not find phone number for organization:', organizationId);
+      }
+    } catch (error) {
+      console.error('❌ Error invalidating organization cache:', error);
+      // Clear all cache as a fallback
+      this.clearCache();
+    }
   }
 }
 

@@ -5,11 +5,13 @@ const PipedriveService = require('../services/pipedrive');
 const HubSpotService = require('../services/hubspot');
 const SalesforceService = require('../services/salesforce');
 const GoogleCalendarService = require('../services/googleCalendar');
+const GoogleAuthService = require('../services/googleAuth');
 
 const prisma = new PrismaClient();
 
-// Google OAuth client
+// Google OAuth clients
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const googleAuthService = new GoogleAuthService();
 
 async function authRoutes(fastify, options) {
   // Register user with email/password
@@ -137,6 +139,70 @@ async function authRoutes(fastify, options) {
       return { token, user, organization: user.organization };
     } catch (error) {
       reply.code(400).send({ error: error.message });
+    }
+  });
+
+  // Google OAuth user authentication routes (new separate client)
+  fastify.get('/google', async (request, reply) => {
+    const { state } = request.query;
+    const authUrl = googleAuthService.getAuthUrl(state);
+    reply.redirect(authUrl);
+  });
+
+  fastify.get('/google/callback', async (request, reply) => {
+    const { code, state } = request.query;
+    
+    if (!code) {
+      return reply.code(400).send({ error: 'Missing authorization code' });
+    }
+
+    try {
+      const tokens = await googleAuthService.getTokensFromCode(code);
+      const userInfo = await googleAuthService.verifyToken(tokens.id_token);
+      
+      const { email, sub: googleId, name } = userInfo;
+
+      let user = await prisma.user.findFirst({
+        where: { 
+          OR: [
+            { email },
+            { googleId }
+          ]
+        },
+        include: { organization: true }
+      });
+
+      if (!user) {
+        // Create new user and organization
+        const organization = await prisma.organization.create({
+          data: {
+            name: `${name}'s Business`,
+            users: {
+              create: {
+                email,
+                googleId,
+                role: 'admin'
+              }
+            }
+          },
+          include: {
+            users: true
+          }
+        });
+        user = organization.users[0];
+      }
+
+      const token = jwt.sign(
+        { userId: user.id, organizationId: user.organizationId, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+
+      // Redirect back to frontend with success
+      reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/app/dashboard?success=google-login`);
+    } catch (error) {
+      console.error('Google OAuth error:', error);
+      reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/auth/login?error=google`);
     }
   });
 

@@ -137,7 +137,7 @@ Tuesday (8h):
 ✅ Test with various accents/phones (3h) - TEST FRAMEWORK READY
 
 Wednesday (8h):
-❌ Set up AWS Polly for TTS (2h) – replaced by Deepgram
+✅ Set up Deepgram TTS (2h) - REPLACED AWS POLLY
 ✅ Set up Deepgram TTS (2h) - AURA MODEL STREAMING
 ✅ Generate basic audio responses (3h) - MULAW 8KHZ FOR PHONE
 ✅ Stream TTS audio back through Twilio (3h) - REAL-TIME STREAMING

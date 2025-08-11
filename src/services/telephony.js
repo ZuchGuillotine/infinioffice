@@ -2,7 +2,14 @@
 const twilio = require('twilio');
 const { VoiceResponse } = twilio.twiml;
 
+// Temporary store for call information (in production, use Redis)
+const callStore = new Map();
+
 const handleIncomingCall = (req, res) => {
+  console.log('🚨 WEBHOOK CALLED - handleIncomingCall starting');
+  console.log('📋 Request body:', req.body);
+  console.log('📋 Request headers:', req.headers);
+  
   const voiceResponse = new VoiceResponse();
 
   // Extract organization info from the call
@@ -23,13 +30,37 @@ const handleIncomingCall = (req, res) => {
   // Use the original host from the request or ngrok forwarded host
   const host = req.headers['x-forwarded-host'] || req.headers.host;
   
-  // Pass call information to the WebSocket handler via query parameters
-  connect.stream({
-    url: `wss://${host}?to=${encodeURIComponent(toNumber)}&from=${encodeURIComponent(fromNumber)}&callSid=${encodeURIComponent(callSid)}`,
+  // Build WebSocket URL (without query parameters - Twilio handles this differently)
+  const wsUrl = `wss://${host}`;
+  
+  console.log('🔗 Generated WebSocket URL:', wsUrl);
+  console.log('📋 Call parameters to store:', {
+    host: host,
+    to: toNumber,
+    from: fromNumber,
+    callSid: callSid
   });
+  
+  // Store call information for WebSocket to retrieve
+  callStore.set(callSid, {
+    to: toNumber,
+    from: fromNumber,
+    callSid: callSid,
+    timestamp: Date.now()
+  });
+  
+  // Pass call information via Stream custom parameters (not query params)
+  // Twilio will send these in the 'start' event data
+  const stream = connect.stream({ url: wsUrl });
+  stream.parameter({ name: 'to', value: toNumber });
+  stream.parameter({ name: 'from', value: fromNumber });
+  stream.parameter({ name: 'callSid', value: callSid });
 
+  const twimlResponse = voiceResponse.toString();
+  console.log('📤 Sending TwiML response to Twilio:', twimlResponse);
+  
   res.type('text/xml');
-  res.send(voiceResponse.toString());
+  res.send(twimlResponse);
 };
 
 const validateTwilioRequest = (req) => {
@@ -67,4 +98,5 @@ module.exports = {
   handleIncomingCall,
   validateTwilioRequest,
   createOutboundCall,
+  callStore, // Export for WebSocket handler to access
 };

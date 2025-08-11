@@ -35,6 +35,7 @@ const detectIntent = async (transcript, conversationContext = {}) => {
 }
 
 Available services at this business: ${serviceList || 'General appointments'}
+Organization: ${conversationContext.organizationContext?.organizationName || 'Default Organization'}
 Current conversation context: ${JSON.stringify(conversationContext)}
 
 Intent definitions:
@@ -269,9 +270,14 @@ const processMessage = async (transcript, sessionId, context = {}, callId = null
     const currentState = context.state || 'greeting';
     const retryCount = session.context.retryCount || 0;
     
-    if (intentResult.intent === 'unclear' && retryCount > 2) {
+    // More sophisticated handling of unclear intents and low confidence
+    if (intentResult.intent === 'unclear' && retryCount > 4) { // Increased threshold from 2 to 4
       responseText = await generateResponse('fallback', context, retryCount);
-    } else if (intentResult.confidence < 0.5) {
+    } else if (intentResult.confidence < 0.3 && retryCount > 2) { // Lower confidence threshold and higher retry count
+      responseText = await generateResponse('clarification', context, retryCount);
+      session.context.retryCount = (retryCount || 0) + 1;
+    } else if (intentResult.confidence < 0.5 && retryCount <= 2) {
+      // Give LLM more chances at medium confidence levels
       responseText = await generateResponse('clarification', context, retryCount);
       session.context.retryCount = (retryCount || 0) + 1;
     } else {
@@ -382,8 +388,17 @@ const mapIntentToStateKey = (intent, currentState, context = {}) => {
     console.warn('⚠️ Context validation failed:', contextValidation.issues);
   }
 
-  // Check for fallback conditions first
+  // Log the mapping attempt for debugging
+  console.log(`🎯 Mapping intent "${intent}" in state "${currentState}" with context:`, {
+    service: context.service,
+    serviceValidated: context.serviceValidated,
+    retryCount: context.retryCount,
+    hasBusinessConfig: !!context.businessConfig
+  });
+
+  // Check for fallback conditions - but be more conservative
   if (shouldTriggerFallback(context, intent)) {
+    console.log(`🔄 Fallback triggered for intent: ${intent}`);
     return determineFallbackResponse(context, intent, currentState);
   }
   
@@ -392,10 +407,17 @@ const mapIntentToStateKey = (intent, currentState, context = {}) => {
     return 'service_after_time';
   }
   
-  // Enhanced service validation logic
+  // Enhanced service validation logic - be more lenient initially
   if (intent === 'service_provided') {
-    // Check if service is valid before proceeding
-    if (context.service && !context.serviceValidated) {
+    // Give the service a chance to be processed first before marking as invalid
+    if (context.service && context.serviceValidated === false && (context.retryCount || 0) < 2) {
+      // First attempt - try to re-validate rather than marking as invalid immediately
+      console.log(`🔄 Re-attempting service validation for: "${context.service}"`);
+      return 'service'; // Ask again rather than marking invalid
+    }
+    
+    // Only mark as invalid after multiple attempts
+    if (context.service && context.serviceValidated === false && (context.retryCount || 0) >= 2) {
       return 'service_invalid';
     }
     
@@ -407,9 +429,9 @@ const mapIntentToStateKey = (intent, currentState, context = {}) => {
     if (context.service && context.serviceValidated && (context.preferredTime || context.timeWindow) && !context.contact) {
       return 'contact';
     }
-    // If we just got the service, it needs validation first
+    // If service validation is still pending or successful, proceed to time collection
     if (!context.preferredTime && !context.timeWindow) {
-      return 'timeWindow'; // This will be handled by state machine validation
+      return 'timeWindow';
     }
   }
   
@@ -461,11 +483,18 @@ const mapIntentToStateKey = (intent, currentState, context = {}) => {
 
 // Helper function to determine if fallback should be triggered
 const shouldTriggerFallback = (context, intent) => {
-  const highRetryCount = (context.retryCount || 0) >= 3;
-  const invalidService = context.service && context.serviceValidated === false;
+  const highRetryCount = (context.retryCount || 0) >= 5; // Increased from 3 to 5 
+  const persistentServiceIssue = context.service && context.serviceValidated === false && (context.retryCount || 0) >= 3;
   const integrationFailure = context.calendarError || context.integrationFailure;
   
-  return highRetryCount || invalidService || integrationFailure;
+  // Be more lenient - don't trigger fallback immediately
+  const shouldFallback = highRetryCount || persistentServiceIssue || integrationFailure;
+  
+  if (shouldFallback) {
+    console.log(`🔄 LLM Triggering fallback: retries=${context.retryCount}, service="${context.service}", validated=${context.serviceValidated}, intent="${intent}"`);
+  }
+  
+  return shouldFallback;
 };
 
 // Helper function to determine appropriate fallback response
@@ -490,25 +519,37 @@ const handleUnclearIntent = (context, currentState) => {
   const retryCount = context.retryCount || 0;
   
   // Progressive clarification based on what we already have
-  if (retryCount >= 3) {
+  // Increased threshold before giving up
+  if (retryCount >= 5) {
     return 'callback_scheduled';
   }
   
-  // Context-aware clarification
+  // Context-aware clarification with more attempts before escalation
   if (!context.service) {
-    return retryCount === 0 ? 'service' : 'service_retry';
+    if (retryCount <= 1) {
+      return 'service';
+    } else if (retryCount <= 3) {
+      return 'service_retry';
+    } else {
+      return 'service_invalid'; // Offer service options or callback
+    }
   }
   
   if (context.service && !context.serviceValidated) {
-    return 'service_invalid';
+    // Give the LLM more chances to validate the service
+    if (retryCount <= 2) {
+      return 'service_invalid';
+    } else {
+      return 'service_callback'; // Escalate to human for service discussion
+    }
   }
   
   if (context.service && context.serviceValidated && !context.preferredTime) {
-    return retryCount === 0 ? 'timeWindow' : 'timeWindow_retry';
+    return retryCount <= 2 ? 'timeWindow' : 'timeWindow_retry';
   }
   
   if (context.service && context.preferredTime && !context.contact) {
-    return retryCount === 0 ? 'contact' : 'contact_retry';
+    return retryCount <= 2 ? 'contact' : 'contact_retry';
   }
   
   return 'clarification';

@@ -11,7 +11,7 @@ MVP target: median ≤1.2s, P95 ≤1.5s per turn; ASR first partial ≤500ms; TT
 
 Scope discipline for MVP: Kept Google Calendar + Outlook 365 as P0. Vertical CRMs (ServiceTitan, Shop-Ware/Tekmetric, Dentrix/Open Dental, HubSpot/Salesforce) are P1+ (adapters).
 
-Stack specificity but swappable: We keep concrete choices for MVP (Twilio, Deepgram/Google ASR, AWS Polly/Azure TTS, GPT-3.5 primary with GPT-4 fallback) while enforcing adapter interfaces so vendors are swappable.
+Stack specificity but swappable: We keep concrete choices for MVP (Twilio, Deepgram ASR/TTS, GPT-3.5 primary with GPT-4 fallback) while enforcing adapter interfaces so vendors are swappable.
 
 Compliance framing (US-only): TCPA SMS consent, two-party consent states for recording, HIPAA-light posture for dental/clinics (no PHI in prompts/memory; encrypted storage if present).
 
@@ -111,7 +111,7 @@ Orchestration: Deterministic state machine + tool calling (LangGraph/Temporal pa
 
 LLM: GPT-3.5 (primary) + GPT-4 (escalations/edge).
 
-TTS: AWS Polly/Azure Neural TTS (streaming; SSML; barge-in friendly).
+TTS: Deepgram TTS (streaming; SSML; barge-in friendly).
 
 Scheduling Adapters: Google Calendar, Outlook 365 (P0); CRM/verticals as P1 adapters.
 
@@ -315,7 +315,7 @@ MVP P0 Backlog (checklist)
 
  ASR (Deepgram/Google) streaming with partials + biasing
 
- TTS (Polly/Azure) streaming with SSML + barge-in control
+ TTS (Deepgram) streaming with SSML + barge-in control
 
  State machine + tool calling (LangGraph/Temporal pattern)
 

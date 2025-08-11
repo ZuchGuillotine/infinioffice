@@ -11,13 +11,13 @@ Backend Runtime	Node.js 20 LTS	Unified JS stack, async handling	Python/FastAPI
 Telephony	Twilio Programmable Voice	Battle-tested, US coverage, media streams	Telnyx (cost savings)
 ASR	Deepgram Nova (phonecall)	Low WER on PSTN, partials, ~<500ms first partial	Google Cloud Speech
 LLM	OpenAI GPT-3.5-Turbo	Low cost, function calling, predictable	GPT-4 for edge/complex turns
-TTS	AWS Polly Neural	Streaming, natural prosody, low cost	Google Cloud TTS
+TTS	Deepgram TTS (Aura)	Streaming, natural prosody, low cost, integrated with ASR	Google Cloud TTS
 Database	PostgreSQL 15	Reliable, ACID; supports partitioning	MongoDB (non-core)
 Infra	AWS App Runner	Managed, autoscaling HTTP	ECS Fargate for media/WS
 Cache/Queues	Redis 7 / SQS	Session state; async retries	NATS / RabbitMQ
 Observability	OpenTelemetry + OTLP exporter	Per-turn tracing and SLOs	New Relic/DataDog agents
 
-Pricing notes (orientation): Twilio US inbound local ≈ $0.0085/min; Deepgram ≈ low single-digit ¢/min; Polly bills per character (≈$16 per 1M chars for neural; ~$0.01–$0.02 per min typical phone cadence).
+Pricing notes (orientation): Twilio US inbound local ≈ $0.0085/min; Deepgram ASR ≈ low single-digit ¢/min; Deepgram TTS bills per character (competitive with Polly; ~$0.01–$0.02 per min typical phone cadence).
 
 Voice Pipeline Architecture
 Telephony Layer (Twilio)
@@ -133,31 +133,30 @@ On 409/5xx:
   1) Read-after-write to confirm state
   2) Retry with backoff (200ms, 500ms, 1s)
   3) Persist failure, send SMS booking link + email to business
-Text-to-Speech (AWS Polly)
+Text-to-Speech (Deepgram TTS)
 json
 Copy
 Edit
 {
   "dependencies": {
-    "@aws-sdk/client-polly": "^3.x",
+    "@deepgram/sdk": "^4.1",  // TTS included
     "@aws-sdk/client-s3": "^3.x"
   }
 }
 js
 Copy
 Edit
-const pollyParams = {
-  OutputFormat: "pcm",   // streaming
-  SampleRate: "8000",    // phone quality
-  VoiceId: "Joanna",     // per-tenant configurable
-  Engine: "neural",
-  TextType: "ssml"
+const deepgramTtsParams = {
+  model: "aura-asteria-en", // per-tenant configurable
+  encoding: "mulaw",        // phone quality
+  sample_rate: 8000,        // phone standard
+  container: "none",        // streaming format
 };
 Playback & cost notes
 
 Stream immediately; keep chunks ≤ ~1s; cancel on ASR partial.
 
-Polly is billed per character (≈$16 / 1M chars neural). Typical phone cadence ≈ $0.01–$0.02/min; cache common prompts (greetings, disclaimers).
+Deepgram TTS is billed per character (competitive pricing). Typical phone cadence ≈ $0.01–$0.02/min; cache common prompts (greetings, disclaimers).
 
 MVP Development Timeline (90 Days)
 Weeks 1–4: Prototype Development
@@ -172,7 +171,7 @@ Week 1–2: Core Infrastructure
 
 Week 3: Voice Pipeline Integration
 - Deepgram ASR streaming + biasing
-- AWS Polly TTS streaming (PCM 8kHz); **barge-in cancel policy**
+- Deepgram TTS streaming (μ-law 8kHz); **barge-in cancel policy**
 - μ-law/PCM conversion as needed for PSTN
 - Achieve ≤1.5s turn latency (median ≤1.2s)
 
@@ -282,8 +281,7 @@ json
 Copy
 Edit
 {
-  "@deepgram/sdk": "^3.x",            // ASR primary
-  "@aws-sdk/client-polly": "^3.x",    // TTS primary
+  "@deepgram/sdk": "^4.1",            // ASR + TTS primary
   "openai": "^4.24.0"                 // LLM primary (chat + tools)
   // Optionals:
   // "@google-cloud/speech": "^6.x",
@@ -470,7 +468,7 @@ TWILIO_ACCOUNT_SID=AC...
 TWILIO_AUTH_TOKEN=...
 DEEPGRAM_API_KEY=...
 AWS_REGION=us-west-2
-POLLY_VOICE=Joanna
+DEEPGRAM_TTS_MODEL=aura-asteria-en
 OTEL_EXPORTER_OTLP_ENDPOINT=https://otel-collector.example.com/v1/traces
 Deployment Strategy
 Environments

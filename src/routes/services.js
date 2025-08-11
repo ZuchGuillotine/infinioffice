@@ -83,6 +83,13 @@ async function servicesRoutes(fastify, options) {
         }
       });
 
+      // IMPORTANT: Invalidate organization cache when services change
+      const { OrganizationContextService } = require('../services/organizationContext');
+      const contextService = new OrganizationContextService();
+      await contextService.invalidateOrganizationCache(organizationId);
+
+      fastify.log.info(`Service created for organization: ${organizationId}`);
+
       return newService;
     } catch (error) {
       fastify.log.error('Error creating service:', error);
@@ -138,6 +145,13 @@ async function servicesRoutes(fastify, options) {
         }
       });
 
+      // IMPORTANT: Invalidate organization cache when services change
+      const { OrganizationContextService } = require('../services/organizationContext');
+      const contextService = new OrganizationContextService();
+      await contextService.invalidateOrganizationCache(organizationId);
+
+      fastify.log.info(`Service updated for organization: ${organizationId}`);
+
       return updatedService;
     } catch (error) {
       fastify.log.error('Error updating service:', error);
@@ -179,6 +193,13 @@ async function servicesRoutes(fastify, options) {
           services: updatedServices
         }
       });
+
+      // IMPORTANT: Invalidate organization cache when services change
+      const { OrganizationContextService } = require('../services/organizationContext');
+      const contextService = new OrganizationContextService();
+      await contextService.invalidateOrganizationCache(organizationId);
+
+      fastify.log.info(`Service deleted for organization: ${organizationId}`);
 
       return { success: true, message: 'Service deleted successfully' };
     } catch (error) {
@@ -253,6 +274,13 @@ async function servicesRoutes(fastify, options) {
           services: processedServices
         }
       });
+
+      // IMPORTANT: Invalidate organization cache when services change
+      const { OrganizationContextService } = require('../services/organizationContext');
+      const contextService = new OrganizationContextService();
+      await contextService.invalidateOrganizationCache(organizationId);
+
+      fastify.log.info(`Bulk services updated for organization: ${organizationId}`);
 
       return processedServices;
     } catch (error) {
