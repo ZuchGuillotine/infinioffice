@@ -47,7 +47,7 @@ class APIClient {
       if (response.status === 401) {
         // Token expired or invalid
         this.setToken(null);
-        window.location.href = '/login';
+        window.location.href = '/auth/login';
         return null;
       }
       

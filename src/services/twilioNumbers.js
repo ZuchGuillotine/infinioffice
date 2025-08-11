@@ -1,3 +1,15 @@
+/**
+    * @description      : 
+    * @author           : 
+    * @group            : 
+    * @created          : 09/08/2025 - 02:54:31
+    * 
+    * MODIFICATION LOG
+    * - Version         : 1.0.0
+    * - Date            : 09/08/2025
+    * - Author          : 
+    * - Modification    : 
+**/
 const twilio = require('twilio');
 
 class TwilioNumberService {
@@ -143,8 +155,27 @@ class TwilioNumberService {
   /**
    * Mock provisioning for development/testing
    * Returns a simulated phone number without actually purchasing from Twilio
+   * For specific test organization (bencox820@hotmail.com), returns functional number
    */
   async mockProvisionNumber(organizationId, preferences = {}) {
+    // Special handling for bencox820@hotmail.com's organization for end-to-end testing
+    const testOrgId = '2842d4a2-315d-46de-a751-5ef63fee5c10';
+    
+    if (organizationId === testOrgId) {
+      const functionalNumber = '+13605641764';
+      console.log('🧪 Mock provisioned FUNCTIONAL number:', functionalNumber, 'for test org:', organizationId);
+      
+      return {
+        sid: `PN${Math.random().toString(36).substr(2, 32)}`,
+        phoneNumber: functionalNumber,
+        friendlyName: `InfiniOffice - ${organizationId.substring(0, 8)}`,
+        capabilities: { voice: true, sms: true },
+        voiceUrl: `${this.webhookBaseUrl}/voice`,
+        mock: false // This is a real functional number
+      };
+    }
+    
+    // Default mock behavior for other organizations
     const areaCode = preferences.areaCode || '555';
     const randomNumber = Math.floor(Math.random() * 9000000) + 1000000;
     const phoneNumber = `+1${areaCode}${randomNumber}`;

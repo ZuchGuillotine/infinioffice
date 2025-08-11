@@ -17,6 +17,8 @@ import SettingsPage from './pages/Dashboard/SettingsPage.jsx'
 import PricingPage from './pages/PricingPage.jsx'
 
 export default function App() {
+  console.log('App: Rendering main App component')
+  
   return (
     <AuthProvider>
       <Routes>

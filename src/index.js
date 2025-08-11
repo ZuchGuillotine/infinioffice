@@ -284,14 +284,26 @@ fastify.register(async function (fastify) {
         ...currentSnapshot.context, // Include current booking context
         organizationContext: organizationContext, // Include organization-specific context
         organizationId: organizationContext.organizationId,
-        businessConfig: organizationContext.businessConfig
+        businessConfig: organizationContext.businessConfig,
+        // Ensure all context fields are preserved
+        serviceValidated: currentSnapshot.context?.serviceValidated || false,
+        calendarError: currentSnapshot.context?.calendarError || false,
+        integrationFailure: currentSnapshot.context?.integrationFailure || false,
+        retryCount: currentSnapshot.context?.retryCount || 0,
+        fallbackReason: currentSnapshot.context?.fallbackReason || null,
+        sessionId: sessionId,
+        turnIndex: turnIndex,
       };
       
       console.log('📋 Current context being sent to LLM:', {
         state: contextWithState.state,
         service: contextWithState.service,
+        serviceValidated: contextWithState.serviceValidated,
         preferredTime: contextWithState.preferredTime,
-        contact: contextWithState.contact
+        contact: contextWithState.contact,
+        retryCount: contextWithState.retryCount,
+        calendarError: contextWithState.calendarError,
+        fallbackReason: contextWithState.fallbackReason
       });
       
       const llmResult = await processMessage(
@@ -325,14 +337,23 @@ fastify.register(async function (fastify) {
         entities: llmResult.entities
       });
       
+      // Ensure state machine context is enriched with business configuration
+      const enrichedBookingData = {
+        ...llmResult.bookingData,
+        businessConfig: organizationContext.businessConfig,
+        sessionId: sessionId,
+        turnIndex: turnIndex,
+      };
+
       bookingService.send({
         type: 'PROCESS_INTENT',
         intent: llmResult.intent,
         confidence: llmResult.confidence,
         response: llmResult.response,
-        bookingData: llmResult.bookingData,
+        bookingData: enrichedBookingData,
         entities: llmResult.entities,
-        originalSpeech: transcript
+        originalSpeech: transcript,
+        businessConfig: organizationContext.businessConfig,
       });
       
       const currentState = bookingService.getSnapshot();

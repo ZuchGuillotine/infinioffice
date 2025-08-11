@@ -1,6 +1,10 @@
 const { PrismaClient } = require('@prisma/client');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
+const PipedriveService = require('../services/pipedrive');
+const HubSpotService = require('../services/hubspot');
+const SalesforceService = require('../services/salesforce');
+const GoogleCalendarService = require('../services/googleCalendar');
 
 const prisma = new PrismaClient();
 
@@ -159,6 +163,263 @@ async function authRoutes(fastify, options) {
       return { user, organization: user.organization };
     } catch (error) {
       reply.code(401).send({ error: 'Invalid token' });
+    }
+  });
+
+  // Pipedrive OAuth routes
+  fastify.get('/pipedrive', async (request, reply) => {
+    const { organizationId } = request.query;
+    if (!organizationId) {
+      return reply.code(400).send({ error: 'Organization ID required' });
+    }
+    
+    const state = Buffer.from(JSON.stringify({ organizationId })).toString('base64');
+    const authUrl = PipedriveService.getAuthUrl(state);
+    
+    reply.redirect(authUrl);
+  });
+
+  fastify.get('/pipedrive/callback', async (request, reply) => {
+    const { code, state } = request.query;
+    
+    if (!code || !state) {
+      return reply.code(400).send({ error: 'Missing authorization code or state' });
+    }
+
+    try {
+      const { organizationId } = JSON.parse(Buffer.from(state, 'base64').toString());
+      
+      // Exchange code for tokens
+      const tokens = await PipedriveService.getTokensFromCode(code);
+      
+      // Validate token and get account info
+      const isValid = await PipedriveService.validateToken(tokens.access_token);
+      if (!isValid) {
+        throw new Error('Invalid access token');
+      }
+
+      const accountInfo = await PipedriveService.getAccountInfo(tokens.access_token);
+
+      // Store integration in database
+      const integration = await prisma.integration.upsert({
+        where: {
+          organizationId_type: {
+            organizationId,
+            type: 'pipedrive'
+          }
+        },
+        update: {
+          oauthTokens: tokens,
+          scopes: PipedriveService.scopes,
+          status: 'active',
+          externalId: accountInfo.id,
+          updatedAt: new Date()
+        },
+        create: {
+          organizationId,
+          type: 'pipedrive',
+          oauthTokens: tokens,
+          scopes: PipedriveService.scopes,
+          status: 'active',
+          externalId: accountInfo.id
+        }
+      });
+
+                   // Redirect back to frontend with success
+             reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/app/integrations?success=pipedrive`);
+      
+    } catch (error) {
+      console.error('Pipedrive OAuth error:', error);
+                   reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/app/integrations?error=pipedrive`);
+    }
+  });
+
+  // HubSpot OAuth routes
+  fastify.get('/hubspot', async (request, reply) => {
+    const { organizationId } = request.query;
+    if (!organizationId) {
+      return reply.code(400).send({ error: 'Organization ID required' });
+    }
+    
+    const state = Buffer.from(JSON.stringify({ organizationId })).toString('base64');
+    const authUrl = HubSpotService.getAuthUrl(state);
+    
+    reply.redirect(authUrl);
+  });
+
+  fastify.get('/hubspot/callback', async (request, reply) => {
+    const { code, state } = request.query;
+    
+    if (!code || !state) {
+      return reply.code(400).send({ error: 'Missing authorization code or state' });
+    }
+
+    try {
+      const { organizationId } = JSON.parse(Buffer.from(state, 'base64').toString());
+      
+      // Exchange code for tokens
+      const tokens = await HubSpotService.getTokensFromCode(code);
+      
+      // Validate token and get account info
+      const accountInfo = await HubSpotService.getAccountInfo(tokens.access_token);
+      
+      // Store integration in database
+      const integration = await prisma.integration.upsert({
+        where: {
+          organizationId_type: {
+            organizationId,
+            type: 'hubspot'
+          }
+        },
+        update: {
+          oauthTokens: tokens,
+          scopes: HubSpotService.scopes,
+          status: 'active',
+          externalId: accountInfo.hub_id,
+          updatedAt: new Date()
+        },
+        create: {
+          organizationId,
+          type: 'hubspot',
+          oauthTokens: tokens,
+          scopes: HubSpotService.scopes,
+          status: 'active',
+          externalId: accountInfo.hub_id
+        }
+      });
+
+                   // Redirect back to frontend with success
+             reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/app/integrations?success=hubspot`);
+      
+    } catch (error) {
+      console.error('HubSpot OAuth error:', error);
+                   reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/app/integrations?error=hubspot`);
+    }
+  });
+
+  // Salesforce OAuth routes
+  fastify.get('/salesforce', async (request, reply) => {
+    const { organizationId } = request.query;
+    if (!organizationId) {
+      return reply.code(400).send({ error: 'Organization ID required' });
+    }
+    
+    const state = Buffer.from(JSON.stringify({ organizationId })).toString('base64');
+    const authUrl = SalesforceService.getAuthUrl(state);
+    
+    reply.redirect(authUrl);
+  });
+
+  fastify.get('/salesforce/callback', async (request, reply) => {
+    const { code, state } = request.query;
+    
+    if (!code || !state) {
+      return reply.code(400).send({ error: 'Missing authorization code or state' });
+    }
+
+    try {
+      const { organizationId } = JSON.parse(Buffer.from(state, 'base64').toString());
+      
+      // Exchange code for tokens
+      const tokens = await SalesforceService.getTokensFromCode(code);
+      
+      // Validate token and get account info
+      const accountInfo = await SalesforceService.getAccountInfo(tokens.access_token, tokens.instance_url);
+      
+      // Store integration in database
+      const integration = await prisma.integration.upsert({
+        where: {
+          organizationId_type: {
+            organizationId,
+            type: 'salesforce'
+          }
+        },
+        update: {
+          oauthTokens: tokens,
+          scopes: SalesforceService.scopes,
+          status: 'active',
+          externalId: accountInfo.id,
+          updatedAt: new Date()
+        },
+        create: {
+          organizationId,
+          type: 'salesforce',
+          oauthTokens: tokens,
+          scopes: SalesforceService.scopes,
+          status: 'active',
+          externalId: accountInfo.id
+        }
+      });
+
+                   // Redirect back to frontend with success
+             reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/app/integrations?success=salesforce`);
+      
+    } catch (error) {
+      console.error('Salesforce OAuth error:', error);
+                   reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/app/integrations?error=salesforce`);
+    }
+  });
+
+  // Google Calendar OAuth routes
+  fastify.get('/google-calendar', async (request, reply) => {
+    const { organizationId } = request.query;
+    if (!organizationId) {
+      return reply.code(400).send({ error: 'Organization ID required' });
+    }
+    
+    const state = Buffer.from(JSON.stringify({ organizationId })).toString('base64');
+    const authUrl = GoogleCalendarService.getAuthUrl(state);
+    
+    reply.redirect(authUrl);
+  });
+
+  fastify.get('/google-calendar/callback', async (request, reply) => {
+    const { code, state } = request.query;
+    
+    if (!code || !state) {
+      return reply.code(400).send({ error: 'Missing authorization code or state' });
+    }
+
+    try {
+      const { organizationId } = JSON.parse(Buffer.from(state, 'base64').toString());
+      
+      // Exchange code for tokens
+      const tokens = await GoogleCalendarService.getTokensFromCode(code);
+      
+      // Validate token and get account info
+      const accountInfo = await GoogleCalendarService.getAccountInfo(tokens.access_token);
+      
+      // Store integration in database
+      const integration = await prisma.integration.upsert({
+        where: {
+          organizationId_type: {
+            organizationId,
+            type: 'google-calendar'
+          }
+        },
+        update: {
+          oauthTokens: tokens,
+          scopes: GoogleCalendarService.scopes,
+          status: 'active',
+          externalId: accountInfo.id,
+          updatedAt: new Date()
+        },
+        create: {
+          organizationId,
+          type: 'google-calendar',
+          oauthTokens: tokens,
+          scopes: GoogleCalendarService.scopes,
+          status: 'active',
+          externalId: accountInfo.id
+        }
+      });
+
+                   // Redirect back to frontend with success
+             reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/app/integrations?success=google-calendar`);
+      
+    } catch (error) {
+      console.error('Google Calendar OAuth error:', error);
+                   reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/app/integrations?error=google-calendar`);
     }
   });
 }

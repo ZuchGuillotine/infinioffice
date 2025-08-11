@@ -24,6 +24,12 @@ const bookingMachine = createMachine({
     confidence: 0,
     sessionId: null,
     currentResponse: null,
+    serviceValidated: false,
+    calendarError: false,
+    integrationFailure: false,
+    retryCount: 0,
+    businessConfig: null,
+    fallbackReason: null,
   },
   states: {
     idle: {
@@ -48,6 +54,28 @@ const bookingMachine = createMachine({
             contact: ({ context, event }) => {
               const newContact = event.bookingData?.contact || event.entities?.contact;
               return newContact || context.contact;
+            },
+            // Preserve enhanced context fields
+            businessConfig: ({ context, event }) => {
+              return event.businessConfig || event.bookingData?.businessConfig || context.businessConfig;
+            },
+            serviceValidated: ({ context, event }) => {
+              return event.bookingData?.serviceValidated || context.serviceValidated || false;
+            },
+            calendarError: ({ context, event }) => {
+              return event.bookingData?.calendarError || context.calendarError || false;
+            },
+            integrationFailure: ({ context, event }) => {
+              return event.bookingData?.integrationFailure || context.integrationFailure || false;
+            },
+            retryCount: ({ context, event }) => {
+              return event.bookingData?.retryCount || context.retryCount || 0;
+            },
+            fallbackReason: ({ context, event }) => {
+              return event.bookingData?.fallbackReason || context.fallbackReason;
+            },
+            sessionId: ({ context, event }) => {
+              return event.bookingData?.sessionId || context.sessionId;
             },
           }),
           target: 'handleIntent',
@@ -93,6 +121,12 @@ const bookingMachine = createMachine({
       ],
     },
     collectService: {
+      always: [
+        {
+          cond: 'shouldFallbackToCallback',
+          target: 'scheduleCallback',
+        }
+      ],
       on: {
         PROCESS_INTENT: {
           actions: assign({
@@ -109,12 +143,66 @@ const bookingMachine = createMachine({
               return newContact || context.contact;
             },
             currentResponse: ({ event }) => event.response,
+            retryCount: ({ context, event }) => {
+              // Reset retry count if we got a new service, increment if unclear
+              return event.bookingData?.service || event.entities?.service 
+                ? 0 
+                : (context.retryCount || 0) + (event.intent === 'unclear' ? 1 : 0);
+            },
+            // Preserve enhanced context fields
+            businessConfig: ({ context, event }) => {
+              return event.businessConfig || event.bookingData?.businessConfig || context.businessConfig;
+            },
+            serviceValidated: ({ context, event }) => {
+              return event.bookingData?.serviceValidated || context.serviceValidated || false;
+            },
+            calendarError: ({ context, event }) => {
+              return event.bookingData?.calendarError || context.calendarError || false;
+            },
+            integrationFailure: ({ context, event }) => {
+              return event.bookingData?.integrationFailure || context.integrationFailure || false;
+            },
+            fallbackReason: ({ context, event }) => {
+              return event.bookingData?.fallbackReason || context.fallbackReason;
+            },
           }),
-          target: 'bookingFlow',
+          target: 'validateService',
         },
       },
     },
+    validateService: {
+      always: [
+        {
+          cond: 'isServiceValid',
+          actions: assign({
+            serviceValidated: true,
+            fallbackReason: null,
+          }),
+          target: 'bookingFlow',
+        },
+        {
+          cond: 'shouldFallbackToCallback',
+          actions: assign({
+            fallbackReason: 'service_invalid',
+          }),
+          target: 'scheduleCallback',
+        },
+        {
+          actions: assign({
+            serviceValidated: false,
+            retryCount: ({ context }) => (context.retryCount || 0) + 1,
+          }),
+          target: 'collectService',
+        },
+      ],
+    },
     collectTimeWindow: {
+      always: [
+        {
+          cond: 'shouldFallbackToCallback',
+          target: 'scheduleCallback',
+        }
+      ],
       on: {
         PROCESS_INTENT: {
           actions: assign({
@@ -131,12 +219,24 @@ const bookingMachine = createMachine({
               return newContact || context.contact;
             },
             currentResponse: ({ event }) => event.response,
+            retryCount: ({ context, event }) => {
+              // Reset retry count if we got time info, increment if unclear
+              return event.bookingData?.preferredTime || event.entities?.timeWindow
+                ? 0 
+                : (context.retryCount || 0) + (event.intent === 'unclear' ? 1 : 0);
+            },
           }),
           target: 'bookingFlow',
         },
       },
     },
     collectContact: {
+      always: [
+        {
+          cond: 'shouldFallbackToCallback',
+          target: 'scheduleCallback',
+        }
+      ],
       on: {
         PROCESS_INTENT: {
           actions: assign({
@@ -153,6 +253,12 @@ const bookingMachine = createMachine({
               return newContact || context.contact;
             },
             currentResponse: ({ event }) => event.response,
+            retryCount: ({ context, event }) => {
+              // Reset retry count if we got contact info, increment if unclear
+              return event.bookingData?.contact || event.entities?.contact
+                ? 0 
+                : (context.retryCount || 0) + (event.intent === 'unclear' ? 1 : 0);
+            },
           }),
           target: 'bookingFlow',
         },
@@ -179,15 +285,57 @@ const bookingMachine = createMachine({
         onDone: {
           target: 'success',
           actions: assign({
-            currentResponse: () => 'Your appointment has been booked successfully! You should receive a confirmation shortly.'
+            currentResponse: ({ context }) => {
+              if (context.calendarError || context.integrationFailure) {
+                return 'Your appointment has been scheduled! However, our calendar system is currently unavailable, so someone from our team will call you tomorrow to confirm the exact time and provide any additional details.';
+              }
+              return 'Your appointment has been booked successfully! You should receive a confirmation shortly.';
+            }
+          }),
+        },
+        onError: {
+          actions: assign({
+            calendarError: true,
+            integrationFailure: true,
+          }),
+          target: 'scheduleCallback',
+        },
+      },
+    },
+    scheduleCallback: {
+      invoke: {
+        id: 'scheduleCallback',
+        src: 'scheduleCallback',
+        onDone: {
+          target: 'callbackScheduled',
+          actions: assign({
+            currentResponse: ({ context }) => {
+              const reason = context.fallbackReason;
+              switch (reason) {
+                case 'service_invalid':
+                  return `I want to make sure we can provide exactly what you need. I've noted your request for "${context.service}" and someone from our team will call you back within the hour to discuss our available services and schedule your appointment.`;
+                case 'calendar_failure':
+                  return `I'm having trouble accessing our scheduling system right now. I've taken down your information for ${context.service} and someone will call you back within the hour to confirm your appointment.`;
+                default:
+                  return `I want to make sure we get all the details right for your appointment. I've taken down your information and someone from our team will call you back within the hour to complete the scheduling.`;
+              }
+            }
           }),
         },
         onError: {
           target: 'fallback',
           actions: assign({
-            currentResponse: () => 'I apologize, but I encountered an issue booking your appointment. Please call us directly to schedule.'
+            currentResponse: () => 'I apologize, but I\'m experiencing technical difficulties. Please call us directly or visit our website to schedule your appointment.'
           }),
         },
+      },
+    },
+    callbackScheduled: {
+      after: {
+        5000: 'idle',
+      },
+      on: {
+        PROCESS_INTENT: 'handleIntent',
       },
     },
     success: {
@@ -217,28 +365,39 @@ const bookingMachine = createMachine({
     isBookingIntent: ({ event }) => event.intent === 'booking',
     isNonBookingIntent: ({ event }) => ['hours', 'location', 'services', 'other'].includes(event.intent),
     hasAllBookingData: ({ context }) => {
-      const result = context.service && context.preferredTime && context.contact;
-      console.log(`🔍 hasAllBookingData: service=${context.service}, time=${context.preferredTime}, contact=${context.contact} => ${result}`);
+      const result = context.service && context.preferredTime && context.contact && context.serviceValidated;
+      console.log(`🔍 hasAllBookingData: service=${context.service}, serviceValidated=${context.serviceValidated}, time=${context.preferredTime}, contact=${context.contact} => ${result}`);
       return result;
     },
     needsService: ({ context }) => {
-      const result = !context.service;
-      console.log(`🔍 needsService: service=${context.service} => ${result}`);
+      const result = !context.service || !context.serviceValidated;
+      console.log(`🔍 needsService: service=${context.service}, serviceValidated=${context.serviceValidated} => ${result}`);
       return result;
     },
     needsTime: ({ context }) => {
-      const result = context.service && !context.preferredTime;
-      console.log(`🔍 needsTime: service=${context.service}, time=${context.preferredTime} => ${result}`);
+      const result = context.service && context.serviceValidated && !context.preferredTime;
+      console.log(`🔍 needsTime: service=${context.service}, serviceValidated=${context.serviceValidated}, time=${context.preferredTime} => ${result}`);
       return result;
     },
     needsContact: ({ context }) => {
-      const result = context.service && context.preferredTime && !context.contact;
-      console.log(`🔍 needsContact: service=${context.service}, time=${context.preferredTime}, contact=${context.contact} => ${result}`);
+      const result = context.service && context.serviceValidated && context.preferredTime && !context.contact;
+      console.log(`🔍 needsContact: service=${context.service}, serviceValidated=${context.serviceValidated}, time=${context.preferredTime}, contact=${context.contact} => ${result}`);
       return result;
     },
     isConfirmation: ({ event }) => {
       const speech = event.originalSpeech || '';
       return /\b(yes|yeah|yep|correct|right|confirm|book|schedule)\b/i.test(speech);
+    },
+    isServiceValid: ({ context, event }) => {
+      // Validate service against business configuration
+      return validateService(context.service || event.bookingData?.service, context.businessConfig);
+    },
+    shouldFallbackToCallback: ({ context, event }) => {
+      // Check if we should fallback to callback scheduling
+      const invalidService = context.service && !context.serviceValidated;
+      const calendarFailure = context.calendarError || context.integrationFailure;
+      const multipleRetries = (context.retryCount || 0) >= 3;
+      return invalidService || calendarFailure || multipleRetries;
     },
   },
   actions: {
@@ -249,22 +408,93 @@ const bookingMachine = createMachine({
       service: null,
       preferredTime: null,
       contact: null,
+      serviceValidated: false,
+      retryCount: 0,
+      fallbackReason: null,
+    }),
+    preserveEnhancedContext: assign({
+      // Standard booking data
+      service: ({ context, event }) => {
+        const newService = event.bookingData?.service || event.entities?.service;
+        return newService || context.service;
+      },
+      preferredTime: ({ context, event }) => {
+        const newTime = event.bookingData?.preferredTime || event.entities?.timeWindow;
+        return newTime || context.preferredTime;
+      },
+      contact: ({ context, event }) => {
+        const newContact = event.bookingData?.contact || event.entities?.contact;
+        return newContact || context.contact;
+      },
+      currentResponse: ({ event }) => event.response,
+      // Enhanced context fields
+      businessConfig: ({ context, event }) => {
+        return event.businessConfig || event.bookingData?.businessConfig || context.businessConfig;
+      },
+      serviceValidated: ({ context, event }) => {
+        return event.bookingData?.serviceValidated !== undefined ? event.bookingData.serviceValidated : context.serviceValidated;
+      },
+      calendarError: ({ context, event }) => {
+        return event.bookingData?.calendarError || context.calendarError || false;
+      },
+      integrationFailure: ({ context, event }) => {
+        return event.bookingData?.integrationFailure || context.integrationFailure || false;
+      },
+      fallbackReason: ({ context, event }) => {
+        return event.bookingData?.fallbackReason || context.fallbackReason;
+      },
+      retryCount: ({ context, event }) => {
+        // Handle retry count logic per state
+        if (event.bookingData?.retryCount !== undefined) {
+          return event.bookingData.retryCount;
+        }
+        return context.retryCount || 0;
+      },
     }),
   },
   services: {
     createAppointment: async (context) => {
-      // Parse the booking data for database storage
-      const appointmentData = {
-        organizationId: process.env.DEFAULT_ORG_ID || '00000000-0000-0000-0000-000000000001',
-        service: context.service,
-        contactPhone: extractPhoneNumber(context.contact),
-        notes: `Service: ${context.service}, Time: ${context.preferredTime}, Contact: ${context.contact}`,
-        status: 'scheduled',
-        startAt: parseDateTime(context.preferredTime),
-        endAt: addHour(parseDateTime(context.preferredTime)),
-      };
-      
-      return await createAppointment(appointmentData);
+      try {
+        // Check calendar integration availability
+        const isCalendarAvailable = await checkCalendarIntegration(context);
+        
+        // Parse the booking data for database storage
+        const appointmentData = {
+          organizationId: process.env.DEFAULT_ORG_ID || '00000000-0000-0000-0000-000000000001',
+          service: context.service,
+          contactPhone: extractPhoneNumber(context.contact),
+          notes: `Service: ${context.service}, Time: ${context.preferredTime}, Contact: ${context.contact}`,
+          status: isCalendarAvailable ? 'scheduled' : 'pending_confirmation',
+          startAt: parseDateTime(context.preferredTime),
+          endAt: addHour(parseDateTime(context.preferredTime)),
+          requiresCallback: !isCalendarAvailable,
+        };
+        
+        return await createAppointment(appointmentData);
+      } catch (error) {
+        console.error('Error creating appointment:', error);
+        throw error;
+      }
+    },
+    scheduleCallback: async (context) => {
+      try {
+        // Create a callback request record
+        const callbackData = {
+          organizationId: process.env.DEFAULT_ORG_ID || '00000000-0000-0000-0000-000000000001',
+          service: context.service || 'General inquiry',
+          contactPhone: extractPhoneNumber(context.contact) || 'Unknown',
+          preferredTime: context.preferredTime || 'Flexible',
+          reason: context.fallbackReason || 'General callback request',
+          notes: `Callback requested: Service: ${context.service || 'Unknown'}, Time: ${context.preferredTime || 'Flexible'}, Contact: ${context.contact || 'Unknown'}, Reason: ${context.fallbackReason || 'General'}`,
+          status: 'pending_callback',
+          callbackBy: new Date(Date.now() + 60 * 60 * 1000), // 1 hour from now
+        };
+        
+        return await createAppointment(callbackData);
+      } catch (error) {
+        console.error('Error scheduling callback:', error);
+        throw error;
+      }
     },
   },
 });
@@ -309,9 +539,92 @@ const addHour = (date) => {
   return newDate;
 };
 
+// Service validation function
+const validateService = (requestedService, businessConfig) => {
+  if (!requestedService || !businessConfig) {
+    console.log('🚫 Service validation failed: Missing service or business config');
+    return false;
+  }
+
+  const services = businessConfig.services || [];
+  const activeServices = services.filter(service => service.active);
+  
+  if (activeServices.length === 0) {
+    console.log('🚫 Service validation failed: No active services configured');
+    return false;
+  }
+
+  // Exact match first
+  const exactMatch = activeServices.find(service => 
+    service.name.toLowerCase() === requestedService.toLowerCase()
+  );
+  
+  if (exactMatch) {
+    console.log(`✅ Service validation passed: Exact match found for "${requestedService}"`);
+    return true;
+  }
+
+  // Fuzzy matching for common variations
+  const fuzzyMatch = activeServices.find(service => {
+    const serviceName = service.name.toLowerCase();
+    const requested = requestedService.toLowerCase();
+    
+    // Check if requested service is contained in the service name or vice versa
+    return serviceName.includes(requested) || requested.includes(serviceName) ||
+           // Check for common abbreviations/variations
+           (serviceName.includes('consultation') && requested.includes('consult')) ||
+           (serviceName.includes('haircut') && (requested.includes('cut') || requested.includes('hair'))) ||
+           (serviceName.includes('cleaning') && requested.includes('clean')) ||
+           (serviceName.includes('repair') && requested.includes('fix'));
+  });
+
+  if (fuzzyMatch) {
+    console.log(`✅ Service validation passed: Fuzzy match found "${requestedService}" -> "${fuzzyMatch.name}"`);
+    return true;
+  }
+
+  console.log(`🚫 Service validation failed: No match found for "${requestedService}"`);
+  console.log(`Available services: ${activeServices.map(s => s.name).join(', ')}`);
+  return false;
+};
+
+// Calendar integration check
+const checkCalendarIntegration = async (context) => {
+  try {
+    // Check if business has calendar integration configured
+    const businessConfig = context.businessConfig;
+    const hasIntegration = businessConfig?.integrations?.some(integration => 
+      integration.type === 'calendar' && integration.active
+    );
+
+    if (!hasIntegration) {
+      console.log('📅 Calendar integration: Not configured');
+      return false;
+    }
+
+    // In a real implementation, you would:
+    // 1. Check if the integration is responding
+    // 2. Verify availability for the requested time
+    // 3. Handle API rate limits and errors gracefully
+    
+    // For now, simulate a simple availability check
+    // This should be replaced with actual integration logic
+    const isAvailable = Math.random() > 0.1; // 90% success rate simulation
+    
+    console.log(`📅 Calendar integration: ${isAvailable ? 'Available' : 'Unavailable'}`);
+    return isAvailable;
+    
+  } catch (error) {
+    console.error('📅 Calendar integration error:', error);
+    return false;
+  }
+};
+
 module.exports = {
   bookingMachine,
   extractPhoneNumber,
   parseDateTime,
   addHour,
+  validateService,
+  checkCalendarIntegration,
 };

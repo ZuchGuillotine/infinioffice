@@ -1,86 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+}
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-generator client {
-  provider = "prisma-client-js"
-}
-
 model Organization {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name          String
-  plan          String    @default("starter")
-  smsBranding   String?
-  twilioNumber  String?   @unique @db.VarChar(20) // Assigned Twilio phone number
-  createdAt     DateTime  @default(now()) @db.Timestamptz
-  updatedAt     DateTime  @updatedAt @db.Timestamptz
-  
-  // Relations
-  users         User[]
-  calls         Call[]
-  appointments  Appointment[]
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String
+  plan           String          @default("starter")
+  smsBranding    String?
+  twilioNumber   String?         @unique @db.VarChar(20)
+  createdAt      DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @db.Timestamptz(6)
+  appointments   Appointment[]
   businessConfig BusinessConfig?
-  integrations  Integration[]
+  calls          Call[]
+  integrations   Integration[]
+  users          User[]
 }
 
 model User {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String   @db.Uuid
-  email          String   @unique
-  role           String   @default("operator") // admin, operator, viewer
-  googleId       String?  @unique
-  createdAt      DateTime @default(now()) @db.Timestamptz
-  updatedAt      DateTime @updatedAt @db.Timestamptz
-  
-  // Relations
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @db.Uuid
+  email          String       @unique
+  role           String       @default("operator")
+  googleId       String?      @unique
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
 model BusinessConfig {
-  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId    String   @unique @db.Uuid
-  businessHours     Json?    // {monday: {start: "09:00", end: "17:00"}, ...}
-  holidays          Json?    // Array of holiday dates
-  services          Json?    // Array of service types with durations
-  providers         Json?    // Array of provider names
-  escalationNumber  String?
-  smsCopy           String?
-  greeting          String?
-  timezone          String   @default("America/New_York")
-  scripts           Json?    // Custom scripts for different states {greeting, service, timeWindow, contact, confirmation, fallback}
-  rules             Json?    // Booking rules {defaultSlotMinutes, bufferMinutes, allowDoubleBooking}
-  voiceSettings     Json?    // Voice configuration {voiceModel, speed, pitch}
-  createdAt         DateTime @default(now()) @db.Timestamptz
-  updatedAt         DateTime @updatedAt @db.Timestamptz
-  
-  // Relations
-  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String       @unique @db.Uuid
+  businessHours    Json?
+  holidays         Json?
+  services         Json?
+  providers        Json?
+  escalationNumber String?
+  smsCopy          String?
+  greeting         String?
+  timezone         String       @default("America/New_York")
+  scripts          Json?
+  rules            Json?
+  voiceSettings    Json?
+  createdAt        DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @db.Timestamptz(6)
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
 model Integration {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String   @db.Uuid
-  type           String   // google_calendar, outlook_calendar, hubspot, salesforce, stripe
-  oauthTokens    Json?    // Encrypted OAuth tokens
-  scopes         Json?    // Array of granted scopes
-  status         String   @default("pending") // pending, active, error
-  externalId     String?  // External system ID
-  createdAt      DateTime @default(now()) @db.Timestamptz
-  updatedAt      DateTime @updatedAt @db.Timestamptz
-  
-  // Relations
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @db.Uuid
+  type           String
+  oauthTokens    Json?
+  scopes         Json?
+  status         String       @default("pending")
+  externalId     String?
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, type])
 }
 
 model Call {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId  String?   @db.Uuid
-  twilioCallSid   String?   @db.VarChar(100)
-  callerPhone     String?   @db.VarChar(20)
-  status          String?   @db.VarChar(50)
-  currentState    String?   @db.VarChar(100)
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String?       @db.Uuid
+  twilioCallSid   String?       @db.VarChar(100)
+  callerPhone     String?       @db.VarChar(20)
+  status          String?       @db.VarChar(50)
+  currentState    String?       @db.VarChar(100)
   context         Json?
   finalContext    Json?
   durationSeconds Int?
@@ -89,12 +82,10 @@ model Call {
   recordingUrl    String?
   metadata        Json?
   error           String?
-  startedAt       DateTime? @db.Timestamptz
-  endedAt         DateTime? @db.Timestamptz
-  lastTransition  DateTime? @db.Timestamptz
-  createdAt       DateTime  @default(now()) @db.Timestamptz
-  
-  // Relations
+  startedAt       DateTime?     @db.Timestamptz(6)
+  endedAt         DateTime?     @db.Timestamptz(6)
+  lastTransition  DateTime?     @db.Timestamptz(6)
+  createdAt       DateTime      @default(now()) @db.Timestamptz(6)
   organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   turns           Turn[]
 }
@@ -108,26 +99,22 @@ model Turn {
   ttsMs         Int?
   transcriptIn  String?
   transcriptOut String?
-  createdAt     DateTime @default(now()) @db.Timestamptz
-  
-  // Relations
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
   call          Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
 }
 
 model Appointment {
-  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId    String   @db.Uuid
-  externalId        String?
-  calendarProvider  String?  @db.VarChar
-  startAt           DateTime @db.Timestamptz
-  endAt             DateTime @db.Timestamptz
-  service           String?
-  provider          String?
-  contactPhone      String?  @db.VarChar(20)
-  notes             String?
-  status            String?  @db.VarChar
-  createdAt         DateTime @default(now()) @db.Timestamptz
-  
-  // Relations
-  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String       @db.Uuid
+  externalId       String?
+  calendarProvider String?      @db.VarChar
+  startAt          DateTime     @db.Timestamptz(6)
+  endAt            DateTime     @db.Timestamptz(6)
+  service          String?
+  provider         String?
+  contactPhone     String?      @db.VarChar(20)
+  notes            String?
+  status           String?      @db.VarChar
+  createdAt        DateTime     @default(now()) @db.Timestamptz(6)
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }

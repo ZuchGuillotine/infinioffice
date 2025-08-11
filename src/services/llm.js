@@ -102,15 +102,18 @@ Be strict with confidence scores. Only use >0.7 for very clear intents.`;
 const generateResponse = async (state, context, retryCount = 0) => {
   // Use organization-specific scripts if available
   const orgScripts = context.businessConfig?.scripts || {};
+  const availableServices = context.businessConfig?.services?.filter(s => s.active)?.map(s => s.name) || [];
+  const serviceList = availableServices.length > 0 ? availableServices.slice(0, 3).join(', ') : 'general appointments';
   
   const prompts = {
     greeting: orgScripts.greeting || context.businessConfig?.greeting || "Hello! This is the infinioffice after hours agent, I'm here to help you schedule an appointment. What service would you like to book?",
     
-    service: orgScripts.service || "What type of service are you looking to schedule today?",
-    service_after_time: `Great! I see you're looking for availability on ${context.preferredTime || context.timeWindow || 'your preferred date'}. What type of service do you need?`,
+    service: orgScripts.service || `What type of service are you looking to schedule today? We offer ${serviceList}${availableServices.length > 3 ? ' and more' : ''}.`,
+    service_after_time: `Great! I see you're looking for availability on ${context.preferredTime || context.timeWindow || 'your preferred date'}. What type of service do you need? We offer ${serviceList}${availableServices.length > 3 ? ' and more' : ''}.`,
     service_retry: retryCount === 1 
-      ? "I didn't quite catch that. Could you please tell me what service you need? For example, consultation, maintenance, or repair?"
-      : "I'm having trouble understanding the service type. Could you be more specific about what you need help with?",
+      ? `I didn't quite catch that. Could you please tell me what service you need? We offer ${serviceList}${availableServices.length > 3 ? ' and other services' : ''}.`
+      : `I'm having trouble understanding the service type. Could you be more specific? Our main services include ${serviceList}.`,
+    service_invalid: `I want to make sure we can provide exactly what you need. We currently offer ${serviceList}${availableServices.length > 3 ? ' and other services' : ''}. Could you choose one of these, or would you like someone to call you back to discuss your specific needs?`,
     
     timeWindow: orgScripts.timeWindow || `Great! You'd like to book a ${context.service || 'service'}. When would you prefer to schedule this?`,
     timeWindow_retry: retryCount === 1
@@ -136,10 +139,19 @@ const generateResponse = async (state, context, retryCount = 0) => {
     
     booking_error: "I'm sorry, there was an issue completing your booking. Let me try that again.",
     
+    calendar_unavailable: "I'm having some difficulty accessing our scheduling system right now. I can still help you by taking down your information and having someone call you back to confirm your appointment.",
+    
     message_complete: "Thank you! I've taken down your information and someone from our team will contact you within the hour to complete your booking.",
     message_error: "I apologize, but I'm experiencing technical difficulties. Please call back or visit our website to schedule.",
     
-    success: orgScripts.success || `Excellent! Your ${context.service} appointment is confirmed for ${context.timeWindow}. You'll receive a confirmation message at ${context.contact}. Is there anything else I can help you with?`
+    success: orgScripts.success || `Excellent! Your ${context.service} appointment is confirmed for ${context.timeWindow || context.preferredTime}. You'll receive a confirmation message at ${context.contact}. Is there anything else I can help you with?`,
+    
+    // Callback scheduling responses
+    callback_scheduled: "Perfect! I've noted all your information and someone from our team will call you back within the hour to finalize your appointment. Is there anything else I can help you with today?",
+    
+    service_callback: `I want to make sure we can provide exactly what you need. I've noted your request and someone knowledgeable about our services will call you back within the hour to discuss your options and schedule your appointment.`,
+    
+    calendar_callback: "I'm experiencing some technical difficulties with our scheduling system, but I don't want to keep you waiting. I've taken down your information and someone will call you back within the hour to confirm your appointment time.",
   };
 
   return prompts[state] || "I'm here to help you schedule an appointment. What can I do for you?";
@@ -235,8 +247,19 @@ const processMessage = async (transcript, sessionId, context = {}, callId = null
     
     const intentMs = Date.now() - startTime;
     
-    // Step 2: Extract booking data from entities (before response generation)
+    // Step 2: Extract and validate booking data from entities (before response generation)
     const bookingData = extractBookingData(intentResult.entities, context);
+    
+    // Step 2.5: Validate service if provided and update context
+    if (bookingData.service && context.businessConfig) {
+      const { validateService } = require('./stateMachine');
+      const isValid = validateService(bookingData.service, context.businessConfig);
+      bookingData.serviceValidated = isValid;
+      
+      if (!isValid) {
+        console.log(`🚫 Service validation failed for: "${bookingData.service}"`);
+      }
+    }
     
     // Step 3: Generate contextual response
     const responseStartTime = Date.now();
@@ -349,49 +372,82 @@ const processMessage = async (transcript, sessionId, context = {}, callId = null
   }
 };
 
-// Helper function to map intents to state response keys
+// Enhanced helper function to map intents to state response keys with logical validation
 const mapIntentToStateKey = (intent, currentState, context = {}) => {
+  const { validateContext } = require('./llm');
+  
+  // Validate context before proceeding
+  const contextValidation = validateContext(context);
+  if (!contextValidation.isValid) {
+    console.warn('⚠️ Context validation failed:', contextValidation.issues);
+  }
+
+  // Check for fallback conditions first
+  if (shouldTriggerFallback(context, intent)) {
+    return determineFallbackResponse(context, intent, currentState);
+  }
+  
   // If user provided time but no service yet, ask for service first
   if (intent === 'time_provided' && !context.service) {
     return 'service_after_time';
   }
   
-  // If user provided service, check what we need next
+  // Enhanced service validation logic
   if (intent === 'service_provided') {
-    // If we have service but no time, ask for time
-    if (context.service && !context.preferredTime && !context.timeWindow) {
+    // Check if service is valid before proceeding
+    if (context.service && !context.serviceValidated) {
+      return 'service_invalid';
+    }
+    
+    // If we have validated service but no time, ask for time
+    if (context.service && context.serviceValidated && !context.preferredTime && !context.timeWindow) {
       return 'timeWindow';
     }
     // If we have service and time but no contact, ask for contact
-    if (context.service && (context.preferredTime || context.timeWindow) && !context.contact) {
+    if (context.service && context.serviceValidated && (context.preferredTime || context.timeWindow) && !context.contact) {
       return 'contact';
     }
-    // If we just got the service, ask for time
+    // If we just got the service, it needs validation first
     if (!context.preferredTime && !context.timeWindow) {
-      return 'timeWindow';
+      return 'timeWindow'; // This will be handled by state machine validation
     }
   }
   
-  // Handle affirmative responses based on current state
+  // Handle affirmative responses with enhanced logic
   if (intent === 'affirmative') {
-    // If we're collecting service and user says "yes" or similar, 
-    // they might be confirming they want to book
+    // Apply progressive information gathering
     if (currentState === 'collectService' || currentState === 'idle') {
       return 'service';
     }
-    // If we have service but no time, ask for time
-    if (context.service && !context.preferredTime && !context.timeWindow) {
+    
+    // Check for service validation
+    if (context.service && !context.serviceValidated) {
+      return 'service_invalid';
+    }
+    
+    // If we have validated service but no time, ask for time
+    if (context.service && context.serviceValidated && !context.preferredTime && !context.timeWindow) {
       return 'timeWindow';
     }
     // If we have service and time but no contact, ask for contact
-    if (context.service && (context.preferredTime || context.timeWindow) && !context.contact) {
+    if (context.service && context.serviceValidated && (context.preferredTime || context.timeWindow) && !context.contact) {
       return 'contact';
     }
+  }
+  
+  // Enhanced error recovery logic
+  if (intent === 'unclear' || intent === 'error') {
+    return handleUnclearIntent(context, currentState);
+  }
+  
+  // Calendar integration failure handling
+  if (context.calendarError || context.integrationFailure) {
+    return 'calendar_unavailable';
   }
   
   const mapping = {
     'booking': 'service',
-    'service_provided': 'timeWindow', 
+    'service_provided': context.serviceValidated ? 'timeWindow' : 'service_invalid', 
     'time_provided': 'contact',
     'contact_provided': 'confirmation',
     'confirmation_yes': 'success',
@@ -403,13 +459,118 @@ const mapIntentToStateKey = (intent, currentState, context = {}) => {
   return mapping[intent] || 'clarification';
 };
 
-// Helper function to extract booking data from entities
+// Helper function to determine if fallback should be triggered
+const shouldTriggerFallback = (context, intent) => {
+  const highRetryCount = (context.retryCount || 0) >= 3;
+  const invalidService = context.service && context.serviceValidated === false;
+  const integrationFailure = context.calendarError || context.integrationFailure;
+  
+  return highRetryCount || invalidService || integrationFailure;
+};
+
+// Helper function to determine appropriate fallback response
+const determineFallbackResponse = (context, intent, currentState) => {
+  if (context.calendarError || context.integrationFailure) {
+    return 'calendar_callback';
+  }
+  
+  if (context.service && context.serviceValidated === false) {
+    return 'service_callback';
+  }
+  
+  if ((context.retryCount || 0) >= 3) {
+    return 'callback_scheduled';
+  }
+  
+  return 'fallback';
+};
+
+// Helper function to handle unclear intents with context-aware recovery
+const handleUnclearIntent = (context, currentState) => {
+  const retryCount = context.retryCount || 0;
+  
+  // Progressive clarification based on what we already have
+  if (retryCount >= 3) {
+    return 'callback_scheduled';
+  }
+  
+  // Context-aware clarification
+  if (!context.service) {
+    return retryCount === 0 ? 'service' : 'service_retry';
+  }
+  
+  if (context.service && !context.serviceValidated) {
+    return 'service_invalid';
+  }
+  
+  if (context.service && context.serviceValidated && !context.preferredTime) {
+    return retryCount === 0 ? 'timeWindow' : 'timeWindow_retry';
+  }
+  
+  if (context.service && context.preferredTime && !context.contact) {
+    return retryCount === 0 ? 'contact' : 'contact_retry';
+  }
+  
+  return 'clarification';
+};
+
+// Helper function to extract booking data from entities with enhanced persistence
 const extractBookingData = (entities, existingContext = {}) => {
-  return {
+  const extractedData = {
     service: entities.service || existingContext.service,
-    preferredTime: entities.timeWindow || existingContext.preferredTime,
-    contact: entities.contact || existingContext.contact
+    preferredTime: entities.timeWindow || existingContext.preferredTime || existingContext.timeWindow,
+    contact: entities.contact || existingContext.contact,
+    serviceValidated: existingContext.serviceValidated || false,
+    calendarError: existingContext.calendarError || false,
+    integrationFailure: existingContext.integrationFailure || false,
+    retryCount: existingContext.retryCount || 0,
+    businessConfig: existingContext.businessConfig || null,
+    fallbackReason: existingContext.fallbackReason || null,
   };
+
+  // Log context preservation for debugging
+  if (extractedData.service) {
+    console.log(`📋 Context preserved - Service: "${extractedData.service}", Validated: ${extractedData.serviceValidated}`);
+  }
+  if (extractedData.preferredTime) {
+    console.log(`📋 Context preserved - Time: "${extractedData.preferredTime}"`);
+  }
+  if (extractedData.contact) {
+    console.log(`📋 Context preserved - Contact: "${extractedData.contact}"`);
+  }
+
+  return extractedData;
+};
+
+// Enhanced context validation function
+const validateContext = (context) => {
+  const issues = [];
+  
+  if (!context) {
+    issues.push('Context is null or undefined');
+    return { isValid: false, issues };
+  }
+
+  // Check for required business configuration
+  if (!context.businessConfig) {
+    issues.push('Missing businessConfig in context');
+  } else {
+    if (!context.businessConfig.services || context.businessConfig.services.length === 0) {
+      issues.push('No services configured in businessConfig');
+    }
+  }
+
+  // Check for context consistency
+  if (context.service && context.serviceValidated === undefined) {
+    issues.push('Service provided but validation status unknown');
+  }
+
+  if (context.serviceValidated === true && !context.service) {
+    issues.push('Service marked as validated but no service provided');
+  }
+
+  const isValid = issues.length === 0;
+  return { isValid, issues };
 };
 
 module.exports = {
@@ -420,4 +581,8 @@ module.exports = {
   sessionManager,
   mapIntentToStateKey,
   extractBookingData,
+  validateContext,
+  shouldTriggerFallback,
+  determineFallbackResponse,
+  handleUnclearIntent,
 };
