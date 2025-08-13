@@ -449,8 +449,18 @@ async function authRoutes(fastify, options) {
     try {
       const { organizationId } = JSON.parse(Buffer.from(state, 'base64').toString());
       
+      console.log('🔍 OAuth Callback Debug:');
+      console.log('  - Organization ID:', organizationId);
+      console.log('  - Authorization Code:', code ? `${code.substring(0, 20)}...` : 'NOT SET');
+      
       // Exchange code for tokens
       const tokens = await GoogleCalendarService.getTokensFromCode(code);
+      console.log('  - Tokens received:', {
+        access_token: tokens.access_token ? 'Set' : 'NOT SET',
+        refresh_token: tokens.refresh_token ? 'Set' : 'NOT SET',
+        token_type: tokens.token_type,
+        expires_in: tokens.expires_in
+      });
       
       // Validate token and get account info
       const accountInfo = await GoogleCalendarService.getAccountInfo(tokens.access_token);
@@ -485,7 +495,13 @@ async function authRoutes(fastify, options) {
       
     } catch (error) {
       console.error('Google Calendar OAuth error:', error);
-                   reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/app/integrations?error=google-calendar`);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        status: error.status
+      });
+      reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/app/integrations?error=google-calendar`);
     }
   });
 }

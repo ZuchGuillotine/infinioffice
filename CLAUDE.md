@@ -36,6 +36,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npx prisma generate` - Generate Prisma client
 - `npx prisma db push` - Push schema changes to database
 - `npx prisma migrate dev` - Create and apply migrations
+- `npm run seed:test-user` - Seed database with test user data
 
 ### Testing Individual Services
 - `npm test tests/unit/calendar.test.js` - Test calendar service
@@ -162,3 +163,22 @@ The React frontend (`frontend/`) includes:
   - IntegrationsPage, SettingsPage, ScriptStudioPage, BillingPage
 - **UI Components**: Reusable components (Button, Card, Input, Select, LoadingSpinner, AudioVisualization, StatusIndicator, etc.)
 - **State Management**: React Context for authentication, TanStack Query for API state
+
+## Environment Requirements
+
+### Environment Variables
+Key environment variables required for development:
+- `DATABASE_URL` - PostgreSQL database connection string
+- `DEEPGRAM_API_KEY` - Deepgram API key for speech-to-text
+- `OPENAI_API_KEY` - OpenAI API key for LLM services
+- `TWILIO_ACCOUNT_SID` - Twilio account SID for telephony
+- `TWILIO_AUTH_TOKEN` - Twilio auth token
+- `JWT_SECRET` - JWT secret for authentication
+- `GOOGLE_CLIENT_ID` - Google OAuth client ID
+- `GOOGLE_CLIENT_SECRET` - Google OAuth client secret
+
+### Development Setup Notes
+- Frontend runs on port 5173 (Vite dev server)
+- Backend runs on port 3001 in development, 3000 in production
+- Use `npm run dev:ngrok` to expose local server for Twilio webhook testing
+- PostgreSQL database required with UUID extension enabled

@@ -47,7 +47,7 @@ COPY --from=builder --chown=infinioffice:nodejs /app/frontend/dist ./frontend/di
 COPY --from=builder --chown=infinioffice:nodejs /app/prisma ./prisma
 COPY --chown=infinioffice:nodejs package*.json ./
 
-# Install Prisma client
+# Install Prisma client and prepare for migrations
 RUN npx prisma generate
 
 # Switch to non-root user

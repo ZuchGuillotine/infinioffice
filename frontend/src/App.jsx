@@ -15,6 +15,8 @@ import IntegrationsPage from './pages/Dashboard/IntegrationsPage.jsx'
 import BillingPage from './pages/Dashboard/BillingPage.jsx'
 import SettingsPage from './pages/Dashboard/SettingsPage.jsx'
 import PricingPage from './pages/PricingPage.jsx'
+import TermsOfServicePage from './pages/Legal/TermsOfServicePage.jsx'
+import PrivacyPolicyPage from './pages/Legal/PrivacyPolicyPage.jsx'
 
 export default function App() {
   console.log('App: Rendering main App component')
@@ -25,6 +27,8 @@ export default function App() {
         {/* Public routes */}
         <Route path="/" element={<LandingPage />} />
         <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/terms" element={<TermsOfServicePage />} />
+        <Route path="/privacy" element={<PrivacyPolicyPage />} />
         <Route path="/auth/login" element={<LoginPage />} />
         <Route path="/auth/register" element={<RegisterPage />} />
         

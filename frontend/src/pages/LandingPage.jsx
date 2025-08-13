@@ -143,11 +143,11 @@ export default function LandingPage() {
 
       <footer className="container mx-auto px-6 py-12 text-center text-muted-foreground border-t border-border/20">
         <div className="flex items-center justify-center gap-8 mb-4">
-          <a href="#" className="hover:text-primary transition-colors">Privacy</a>
-          <a href="#" className="hover:text-primary transition-colors">Terms</a>
-          <a href="#" className="hover:text-primary transition-colors">Support</a>
+          <Link to="/privacy" className="hover:text-primary transition-colors">Privacy Policy</Link>
+          <Link to="/terms" className="hover:text-primary transition-colors">Terms of Service</Link>
+          <a href="mailto:delicacybydesign@gmail.com" className="hover:text-primary transition-colors">Support</a>
         </div>
-        <p>© {new Date().getFullYear()} InfiniOffice. Built for the future of business communication.</p>
+        <p>© {new Date().getFullYear()} InfiniOffice LLC. Built for the future of business communication.</p>
       </footer>
     </div>
   )

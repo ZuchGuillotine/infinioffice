@@ -11,9 +11,9 @@ if [ ! -f "package.json" ]; then
     exit 1
 fi
 
-# Install backend dependencies
+# Install backend dependencies (need dev deps for build)
 echo "📦 Installing backend dependencies..."
-npm ci --only=production
+npm ci
 
 # Install frontend dependencies
 echo "📦 Installing frontend dependencies..."

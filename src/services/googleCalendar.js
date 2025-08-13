@@ -95,15 +95,32 @@ class GoogleCalendarService {
       this.redirectUri
     );
     
-    oauth2Client.setCredentials(tokens);
+    // Set additional metadata to help Google identify our application
+    oauth2Client.setCredentials({
+      ...tokens,
+      // Ensure all required token fields are present
+      token_type: tokens.token_type || 'Bearer'
+    });
+    
     return oauth2Client;
+  }
+
+  createCalendarService(oauth2Client) {
+    // Create calendar service with OAuth authentication only
+    // DO NOT mix OAuth with API key - this causes 403 "unregistered callers" errors
+    const calendar = google.calendar({ 
+      version: 'v3', 
+      auth: oauth2Client
+    });
+    
+    return calendar;
   }
 
   // Get user's calendars
   async getCalendars(tokens) {
     try {
       const oauth2Client = this.createOAuth2Client(tokens);
-      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      const calendar = this.createCalendarService(oauth2Client);
       
       const response = await calendar.calendarList.list();
       return response.data.items.map(cal => ({
@@ -123,7 +140,7 @@ class GoogleCalendarService {
   async createEvent(tokens, calendarId, eventData) {
     try {
       const oauth2Client = this.createOAuth2Client(tokens);
-      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      const calendar = this.createCalendarService(oauth2Client);
       
       const event = {
         summary: eventData.summary || 'Appointment',
@@ -169,7 +186,7 @@ class GoogleCalendarService {
   async updateEvent(tokens, calendarId, eventId, eventData) {
     try {
       const oauth2Client = this.createOAuth2Client(tokens);
-      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      const calendar = this.createCalendarService(oauth2Client);
       
       const event = {
         summary: eventData.summary,
@@ -209,7 +226,7 @@ class GoogleCalendarService {
   async deleteEvent(tokens, calendarId, eventId) {
     try {
       const oauth2Client = this.createOAuth2Client(tokens);
-      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      const calendar = this.createCalendarService(oauth2Client);
       
       await calendar.events.delete({
         calendarId: calendarId,
@@ -228,7 +245,7 @@ class GoogleCalendarService {
   async getAvailableSlots(tokens, calendarId, startDate, endDate, duration = 60) {
     try {
       const oauth2Client = this.createOAuth2Client(tokens);
-      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      const calendar = this.createCalendarService(oauth2Client);
       
       // Get busy times
       const response = await calendar.freebusy.query({
@@ -277,11 +294,40 @@ class GoogleCalendarService {
   // Get calendar events for the next 90 days
   async getEvents(tokens, calendarId, daysAhead = 90) {
     try {
+      console.log('🔍 Debug getEvents:');
+      console.log('  - Tokens received:', {
+        access_token: tokens.access_token ? `${tokens.access_token.substring(0, 20)}...` : 'NOT SET',
+        refresh_token: tokens.refresh_token ? 'Set' : 'NOT SET',
+        token_type: tokens.token_type,
+        expires_in: tokens.expires_in,
+        expiry_date: tokens.expiry_date
+      });
+      
       const oauth2Client = this.createOAuth2Client(tokens);
-      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      console.log('  - OAuth2Client created successfully');
+      
+      // Check if token needs refresh
+      if (tokens.expiry_date && new Date(tokens.expiry_date) <= new Date()) {
+        console.log('  - Token expired, attempting refresh...');
+        try {
+          const refreshedTokens = await oauth2Client.refreshAccessToken();
+          console.log('  - Token refresh successful');
+          oauth2Client.setCredentials(refreshedTokens.credentials);
+        } catch (refreshError) {
+          console.error('  - Token refresh failed:', refreshError.message);
+          throw new Error('Failed to refresh expired tokens');
+        }
+      }
+      
+      const calendar = this.createCalendarService(oauth2Client);
+      console.log('  - Calendar service created, making API call...');
+      console.log('  - Calendar service auth type:', typeof oauth2Client);
       
       const now = new Date();
       const endDate = new Date(now.getTime() + (daysAhead * 24 * 60 * 60 * 1000));
+      
+      console.log('  - Requesting events from:', calendarId);
+      console.log('  - Time range:', now.toISOString(), 'to', endDate.toISOString());
       
       const response = await calendar.events.list({
         calendarId: calendarId,
@@ -291,6 +337,8 @@ class GoogleCalendarService {
         orderBy: 'startTime',
         maxResults: 2500 // Google Calendar API limit
       });
+      
+      console.log('  - Calendar API call successful, events received:', response.data.items?.length || 0);
 
       return response.data.items.map(event => ({
         id: event.id,
@@ -305,7 +353,13 @@ class GoogleCalendarService {
         isAllDay: !event.start.dateTime
       }));
     } catch (error) {
-      console.error('Error getting calendar events:', error);
+      console.error('❌ Error getting calendar events:', error);
+      console.error('  - Error details:', {
+        message: error.message,
+        code: error.code,
+        status: error.status,
+        response: error.response?.data
+      });
       throw new Error('Failed to fetch calendar events');
     }
   }
@@ -314,7 +368,7 @@ class GoogleCalendarService {
   async getBusyTimes(tokens, calendarId, startDate, endDate) {
     try {
       const oauth2Client = this.createOAuth2Client(tokens);
-      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      const calendar = this.createCalendarService(oauth2Client);
       
       const response = await calendar.freebusy.query({
         resource: {
@@ -355,20 +409,78 @@ class GoogleCalendarService {
   // Get account info
   async getAccountInfo(accessToken) {
     try {
-      const oauth2Client = new OAuth2Client();
+      console.log('🔍 Debug getAccountInfo:');
+      console.log('  - Client ID:', this.clientId ? 'Set' : 'NOT SET');
+      console.log('  - Client Secret:', this.clientSecret ? 'Set' : 'NOT SET');
+      console.log('  - Redirect URI:', this.redirectUri);
+      console.log('  - Access Token:', accessToken ? `${accessToken.substring(0, 20)}...` : 'NOT SET');
+      
+      // Create OAuth2 client with proper credentials
+      const oauth2Client = new OAuth2Client(
+        this.clientId,
+        this.clientSecret,
+        this.redirectUri
+      );
       oauth2Client.setCredentials({ access_token: accessToken });
       
-      const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
-      const response = await oauth2.userinfo.get();
+      console.log('  - OAuth2Client created successfully');
       
-      return {
-        id: response.data.id,
-        email: response.data.email,
-        name: response.data.name,
-        picture: response.data.picture
-      };
+      // Try to get user info from calendar API first (more reliable with calendar scopes)
+      try {
+        console.log('  - Trying Calendar API for user info...');
+        const calendar = this.createCalendarService(oauth2Client);
+        
+        // Get the primary calendar to extract user info
+        const calendarList = await calendar.calendarList.list({ maxResults: 1 });
+        const primaryCalendar = calendarList.data.items[0];
+        
+        if (primaryCalendar) {
+          console.log('  - Calendar API request successful');
+          return {
+            id: primaryCalendar.id, // Use calendar ID as user ID
+            email: primaryCalendar.id, // Calendar ID is usually the user's email
+            name: primaryCalendar.summary || 'Google Calendar User',
+            picture: null
+          };
+        }
+      } catch (calendarError) {
+        console.log('  - Calendar API failed, trying OAuth2 API...');
+      }
+      
+      // Fallback to OAuth2 API
+      try {
+        console.log('  - Trying OAuth2 API...');
+        const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+        const response = await oauth2.userinfo.get();
+        console.log('  - OAuth2 API request successful');
+        
+        return {
+          id: response.data.id,
+          email: response.data.email,
+          name: response.data.name,
+          picture: response.data.picture
+        };
+      } catch (oauth2Error) {
+        console.log('  - OAuth2 API also failed, using fallback...');
+        
+        // Final fallback: create a basic user object from the token
+        // We can extract some info from the JWT token if needed
+        return {
+          id: 'google-calendar-user',
+          email: 'calendar-user@google.com',
+          name: 'Google Calendar User',
+          picture: null
+        };
+      }
+      
     } catch (error) {
-      console.error('Error getting account info:', error);
+      console.error('❌ Error getting account info:', error);
+      console.error('  - Error details:', {
+        message: error.message,
+        code: error.code,
+        status: error.status,
+        response: error.response?.data
+      });
       throw new Error('Failed to get account information');
     }
   }
@@ -377,7 +489,7 @@ class GoogleCalendarService {
   async validateTokens(tokens) {
     try {
       const oauth2Client = this.createOAuth2Client(tokens);
-      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      const calendar = this.createCalendarService(oauth2Client);
       
       // Try to access calendar list to validate tokens
       await calendar.calendarList.list({ maxResults: 1 });

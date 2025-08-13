@@ -22,6 +22,20 @@ fastify.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'st
   }
 });
 
+// Fix for empty JSON bodies on DELETE requests
+fastify.addContentTypeParser('application/json', { parseAs: 'string' }, function (req, body, done) {
+  try {
+    // Handle empty body for DELETE requests
+    if (body.trim() === '') {
+      done(null, {});
+    } else {
+      done(null, JSON.parse(body));
+    }
+  } catch (err) {
+    done(err);
+  }
+});
+
 const { handleIncomingCall, callStore } = require('./services/telephony');
 const { STTService } = require('./services/stt');
 const { processMessage, sessionManager, getCompletion } = require('./services/llm');
@@ -47,7 +61,7 @@ const { authMiddleware } = require('./middleware/auth');
 // Register CORS support
 fastify.register(require('@fastify/cors'), {
   origin: process.env.NODE_ENV === 'production' 
-    ? [process.env.FRONTEND_URL || 'https://your-domain.com']
+    ? [process.env.FRONTEND_URL || `https://${process.env.DOMAIN || 'localhost'}`]
     : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
@@ -725,15 +739,34 @@ fastify.get('/metrics', async (request, reply) => {
 
 // Health check endpoint
 fastify.get('/health', async (request, reply) => {
-  return { 
+  const health = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    services: {
-      deepgram: !!process.env.DEEPGRAM_API_KEY,
-      openai: !!process.env.OPENAI_API_KEY,
-      database: !!process.env.DATABASE_URL
-    }
+    services: {}
   };
+
+  // Test database connection
+  try {
+    const { PrismaClient } = require('@prisma/client');
+    const prisma = new PrismaClient();
+    await prisma.$queryRaw`SELECT 1`;
+    await prisma.$disconnect();
+    health.services.database = 'connected';
+  } catch (error) {
+    health.services.database = 'error';
+    health.status = 'degraded';
+  }
+
+  // Test OpenAI API
+  health.services.openai = process.env.OPENAI_API_KEY ? 'configured' : 'missing';
+  
+  // Test Deepgram API  
+  health.services.deepgram = process.env.DEEPGRAM_API_KEY ? 'configured' : 'missing';
+
+  // Test Twilio configuration
+  health.services.twilio = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) ? 'configured' : 'missing';
+
+  return health;
 });
 
 // Serve React app for all non-API routes in production
