@@ -3,6 +3,7 @@ import Button from '../../components/ui/Button.jsx'
 import BusinessBasics from './steps/BusinessBasics.jsx'
 import PhoneNumbers from './steps/PhoneNumbers.jsx'
 import ScriptComposer from './steps/ScriptComposer.jsx'
+import VoiceSelection from './steps/VoiceSelection.jsx'
 import SchedulingRules from './steps/SchedulingRules.jsx'
 import TestCall from './steps/TestCall.jsx'
 import AnimatedBackground from '../../components/ui/AnimatedBackground.jsx'
@@ -55,6 +56,7 @@ export default function OnboardingPage() {
                 <Route index element={<BusinessBasics />} />
                 <Route path="phone" element={<PhoneNumbers />} />
                 <Route path="script" element={<ScriptComposer />} />
+                <Route path="voice" element={<VoiceSelection />} />
                 <Route path="schedule" element={<SchedulingRules />} />
                 <Route path="test" element={<TestCall />} />
               </Routes>
@@ -70,6 +72,7 @@ const steps = [
   { name: 'Business Info', desc: 'Basic details', to: '/onboarding', icon: '🏢' },
   { name: 'Phone Setup', desc: 'Connect your number', to: '/onboarding/phone', icon: '📞' },
   { name: 'AI Script', desc: 'Customize responses', to: '/onboarding/script', icon: '🤖' },
+  { name: 'Voice Selection', desc: 'Choose AI voice', to: '/onboarding/voice', icon: '🎙️' },
   { name: 'Scheduling', desc: 'Set availability', to: '/onboarding/schedule', icon: '📅' },
   { name: 'Test Call', desc: 'Try it out', to: '/onboarding/test', icon: '✅' },
 ]

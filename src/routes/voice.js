@@ -11,7 +11,8 @@ async function voiceRoutes(fastify, options) {
   // Generate TTS preview for text
   fastify.post('/preview', async (request, reply) => {
     const { organizationId } = request.user;
-    const { text, voice = 'aura-asteria-en' } = request.body;
+    const { text, voiceModel = 'aura-aurora-en' } = request.body;
+    const voice = voiceModel;
     
     if (!text) {
       return reply.code(400).send({ error: 'Text is required for preview' });
@@ -66,7 +67,7 @@ async function voiceRoutes(fastify, options) {
   // Test TTS with organization's greeting
   fastify.post('/test-greeting', async (request, reply) => {
     const { organizationId } = request.user;
-    const { voice = 'aura-asteria-en' } = request.body;
+    const { voice = 'aura-aurora-en' } = request.body;
     
     try {
       // Get organization's greeting
@@ -124,67 +125,32 @@ async function voiceRoutes(fastify, options) {
       // Return available Deepgram Aura voice models
       const voices = [
         {
-          id: 'aura-asteria-en',
-          name: 'Asteria',
+          id: 'aura-aurora-en',
+          name: 'Aurora',
           language: 'en-US',
           gender: 'female',
-          description: 'Warm, conversational tone perfect for customer service'
+          description: 'Warm and professional female voice'
         },
         {
-          id: 'aura-luna-en',
-          name: 'Luna',
+          id: 'aura-harmonia-en',
+          name: 'Harmonia',
           language: 'en-US',
           gender: 'female',
-          description: 'Clear, professional voice ideal for business communications'
+          description: 'Elegant and articulate female voice'
         },
         {
-          id: 'aura-stella-en',
-          name: 'Stella',
-          language: 'en-US',
-          gender: 'female',
-          description: 'Friendly, approachable voice great for appointments'
-        },
-        {
-          id: 'aura-athena-en',
-          name: 'Athena',
-          language: 'en-US',
-          gender: 'female',
-          description: 'Confident, clear voice perfect for professional services'
-        },
-        {
-          id: 'aura-hera-en',
-          name: 'Hera',
-          language: 'en-US',
-          gender: 'female',
-          description: 'Sophisticated, calm voice for premium services'
-        },
-        {
-          id: 'aura-orion-en',
-          name: 'Orion',
+          id: 'aura-zeus-en',
+          name: 'Zeus',
           language: 'en-US',
           gender: 'male',
-          description: 'Professional, trustworthy male voice'
+          description: 'Authoritative and confident male voice'
         },
         {
-          id: 'aura-arcas-en',
-          name: 'Arcas',
+          id: 'aura-saturn-en',
+          name: 'Saturn',
           language: 'en-US',
           gender: 'male',
-          description: 'Warm, friendly male voice'
-        },
-        {
-          id: 'aura-perseus-en',
-          name: 'Perseus',
-          language: 'en-US',
-          gender: 'male',
-          description: 'Clear, articulate male voice'
-        },
-        {
-          id: 'aura-angus-en',
-          name: 'Angus',
-          language: 'en-US',
-          gender: 'male',
-          description: 'Deep, authoritative male voice'
+          description: 'Deep and reassuring male voice'
         }
       ];
 

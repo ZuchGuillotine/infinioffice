@@ -12,7 +12,7 @@ class TTSService extends EventEmitter {
 
   async getSpeech(text, options = {}) {
     const config = {
-      model: 'aura-asteria-en',
+      model: options.model || 'aura-asteria-en',
       encoding: 'mulaw',
       sample_rate: 8000,
       container: 'none',

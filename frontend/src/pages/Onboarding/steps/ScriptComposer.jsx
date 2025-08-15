@@ -21,8 +21,8 @@ export default function ScriptComposer() {
         <Input value={capabilities} readOnly />
       </div>
       <div className="flex gap-3">
-        <Button onClick={() => (window.location.href = '/onboarding/schedule')}>Continue</Button>
-        <Button variant="secondary">Preview TTS</Button>
+        <Button onClick={() => (window.location.href = '/onboarding/voice')}>Continue</Button>
+        <Button variant="ghost" onClick={() => (window.location.href = '/onboarding/phone')}>Back</Button>
       </div>
     </div>
   )

@@ -209,10 +209,22 @@ class OrganizationContextService {
    */
   getDefaultVoiceSettings() {
     return {
-      voiceModel: 'aura-asteria-en',
+      voiceModel: 'aura-aurora-en',
       speed: 1.0,
       pitch: 1.0
     };
+  }
+
+  /**
+   * Get available voice options for user selection
+   */
+  getAvailableVoices() {
+    return [
+      { value: 'aura-aurora-en', label: 'Aurora', description: 'Warm and professional female voice' },
+      { value: 'aura-harmonia-en', label: 'Harmonia', description: 'Elegant and articulate female voice' },
+      { value: 'aura-zeus-en', label: 'Zeus', description: 'Authoritative and confident male voice' },
+      { value: 'aura-saturn-en', label: 'Saturn', description: 'Deep and reassuring male voice' }
+    ];
   }
 
   /**

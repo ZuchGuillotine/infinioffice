@@ -84,7 +84,8 @@ async function organizationRoutes(fastify, options) {
       escalationNumber,
       smsCopy,
       greeting,
-      timezone
+      timezone,
+      voiceSettings
     } = request.body;
     
     try {
@@ -98,7 +99,8 @@ async function organizationRoutes(fastify, options) {
           escalationNumber,
           smsCopy,
           greeting,
-          timezone
+          timezone,
+          voiceSettings
         },
         create: {
           organizationId,
@@ -109,7 +111,8 @@ async function organizationRoutes(fastify, options) {
           escalationNumber,
           smsCopy,
           greeting,
-          timezone
+          timezone,
+          voiceSettings
         }
       });
 
