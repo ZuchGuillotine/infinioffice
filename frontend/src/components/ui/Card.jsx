@@ -30,6 +30,14 @@ export function CardTitle({ className, children }) {
   )
 }
 
+export function CardDescription({ className, children }) {
+  return (
+    <p className={clsx("text-sm text-muted-foreground", className)}>
+      {children}
+    </p>
+  )
+}
+
 export function CardContent({ className, children }) {
   return (
     <div className={clsx("p-6 pt-0", className)}>

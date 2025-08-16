@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Twilio Number Management Service**: Automated phone number provisioning and webhook configuration
 - **Organization Context Service**: Efficient lookup and caching of organization settings by phone number
 - **Database Connection Pre-warming**: Optimized startup sequence with connection pooling and query pre-warming for reduced latency
+- **Voice Selection Feature**: Organizations can now choose from multiple Deepgram TTS voices (Saturn, Harmonia, Hera, Zeus) with real-time preview testing and seamless integration across the voice pipeline
 
 ### Enhanced
 - **Voice Agent Architecture**: Implemented enhanced voice pipeline with state machine management, progressive summarization, and digression handling
@@ -51,6 +52,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Service Ambiguity Issues**: Resolved confusion where agent couldn't distinguish "Quote or Bid" as a single service, causing infinite clarification loops
 - **Information Re-requesting**: Fixed issue where agent would repeatedly ask for time, date, or address information that customers had already provided
 - **Robotic Conversation Flow**: Completely overhauled conversation style from rigid Q&A to natural, chatty interactions that acknowledge customer details and build rapport
+- **Verbose Logging**: Reduced excessive STT logging by filtering out empty transcript events, improving collaboration and debugging efficiency
+- **Response Repetition**: Enhanced conversation variation system to prevent identical timeout messages and robotic repeated responses throughout conversations
+- **Service Recognition Intelligence**: Enhanced service matching to recognize natural language variations like "alders taken down" mapping to "Tree Falling" service
+- **Confirmation vs Clarification Flow**: Fixed unnecessary clarification loops by implementing proper confirmation flow when services are successfully matched
+- **LLM Response History**: Added response tracking system to prevent LLM from repeating identical responses within the same conversation
+- **Multi-Entity Processing**: Enhanced system to capture and acknowledge multiple pieces of information provided in single customer statements (e.g., address AND time together)
+- **Turn Boundary Detection**: Implemented intelligent buffering to handle continuous speech that STT fragments into multiple final transcripts, ensuring related information is processed together
+- **Address Intent Recognition**: Fixed intent detection to properly classify location statements like "Yeah. It's at 6969 Bing Bong Avenue" as location_provided instead of unclear
+- **Comprehensive Information Acknowledgment**: Enhanced response generation to acknowledge ALL information provided by customer in natural conversational flow
+- **Voice Selection Authentication**: Fixed 401 authentication errors in VoiceSettingsEditor by implementing proper API client integration instead of manual token handling
+- **Deepgram Voice Model Mapping**: Resolved voice selection not applying to calls by fixing voice model format inconsistencies and implementing proper voice mapping from frontend names to Deepgram API format
+- **TTS Configuration Override**: Fixed critical bug where voice model mapping was being overridden by spread operator in config object, ensuring selected voices are properly applied to all TTS calls
 
 ### Technical
 - **Circular Dependency Resolution**: Refactored enhanced voice pipeline imports in `src/index.js` to use lazy loading pattern. Replaced immediate instantiation with `getEnhancedServices()`, `getEnhancedVoicePipeline()`, and `getGlobalEnhancedVoicePipeline()` functions to break circular import chain at module load time.
@@ -69,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implemented in-memory callStore as fallback mechanism for call parameter retrieval
 - Enhanced phone number normalization for reliable organization context lookups
 - Added cache invalidation triggers for real-time organization configuration updates
+- **Voice Settings Infrastructure**: Implemented voice settings API endpoints with role-based access control, voice model validation, and organization context caching integration
+- **Voice Model Mapping System**: Created comprehensive voice mapping system to translate user-friendly voice names (saturn, harmonia, hera, zeus) to Deepgram API format (aura-2-*-en)
+- **TTS Configuration Architecture**: Updated TTS service to handle multiple calling patterns and ensure voice model precedence in configuration objects
 
 ### Performance
 - **Call Startup Latency**: Reduced from several seconds to ~300ms for custom greeting delivery

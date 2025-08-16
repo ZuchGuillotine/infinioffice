@@ -230,7 +230,7 @@ async function organizationRoutes(fastify, options) {
         greeting: config?.greeting || "Hello! Thank you for calling. I'm here to help you schedule an appointment. How can I assist you today?",
         escalationNumber: config?.escalationNumber || null,
         smsCopy: config?.smsCopy || "Thank you for calling! We'll send you a confirmation via text message.",
-        voiceModel: 'aura-asteria-en', // Default voice model
+        voiceModel: 'harmonia', // Default voice model
         speechRate: 1.0, // Normal speech rate
         volume: 0.8, // Default volume
         confirmationPrompts: {
@@ -283,7 +283,7 @@ async function organizationRoutes(fastify, options) {
           smsCopy,
           scripts: scripts || undefined, // Store custom scripts
           voiceSettings: {
-            voiceModel: voiceModel || 'aura-asteria-en',
+            voiceModel: voiceModel || 'harmonia',
             speed: speechRate || 1.0,
             pitch: volume || 0.8,
             confirmationPrompts: confirmationPrompts || {},
@@ -305,7 +305,7 @@ async function organizationRoutes(fastify, options) {
             success: "Your appointment has been successfully scheduled! You'll receive a confirmation shortly."
           },
           voiceSettings: {
-            voiceModel: voiceModel || 'aura-asteria-en',
+            voiceModel: voiceModel || 'harmonia',
             speed: speechRate || 1.0,
             pitch: volume || 0.8
           }
@@ -324,7 +324,7 @@ async function organizationRoutes(fastify, options) {
         escalationNumber: config.escalationNumber,
         smsCopy: config.smsCopy,
         scripts: config.scripts,
-        voiceModel: config.voiceSettings?.voiceModel || voiceModel || 'aura-asteria-en',
+        voiceModel: config.voiceSettings?.voiceModel || voiceModel || 'harmonia',
         speechRate: config.voiceSettings?.speed || speechRate || 1.0,
         volume: config.voiceSettings?.pitch || volume || 0.8,
         confirmationPrompts: config.voiceSettings?.confirmationPrompts || confirmationPrompts || {},

@@ -264,7 +264,7 @@ class OrganizationContextService {
    */
   getDefaultVoiceSettings() {
     return {
-      voiceModel: 'aura-aurora-en',
+      voiceModel: 'harmonia', // Use the frontend voice names, TTS service will map to Deepgram names
       speed: 1.0,
       pitch: 1.0
     };
@@ -275,10 +275,10 @@ class OrganizationContextService {
    */
   getAvailableVoices() {
     return [
-      { value: 'aura-aurora-en', label: 'Aurora', description: 'Warm and professional female voice' },
-      { value: 'aura-harmonia-en', label: 'Harmonia', description: 'Elegant and articulate female voice' },
-      { value: 'aura-zeus-en', label: 'Zeus', description: 'Authoritative and confident male voice' },
-      { value: 'aura-saturn-en', label: 'Saturn', description: 'Deep and reassuring male voice' }
+      { value: 'saturn', label: 'Saturn', description: 'Deep, authoritative male voice' },
+      { value: 'harmonia', label: 'Harmonia', description: 'Warm, friendly female voice' },
+      { value: 'hera', label: 'Hera', description: 'Professional, confident female voice' },
+      { value: 'zeus', label: 'Zeus', description: 'Strong, commanding male voice' }
     ];
   }
 

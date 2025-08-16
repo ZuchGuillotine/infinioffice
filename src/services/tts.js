@@ -11,12 +11,22 @@ class TTSService extends EventEmitter {
   }
 
   async getSpeech(text, options = {}) {
+    // Map our voice names to Deepgram model names
+    const voiceModelMap = {
+      'saturn': 'aura-2-saturn-en',
+      'harmonia': 'aura-2-harmonia-en', 
+      'hera': 'aura-2-hera-en',
+      'zeus': 'aura-2-zeus-en'
+    };
+    
+    const deepgramModel = voiceModelMap[options.model] || options.model || 'aura-2-harmonia-en';
+    
     const config = {
-      model: options.model || 'aura-asteria-en',
       encoding: 'mulaw',
       sample_rate: 8000,
       container: 'none',
-      ...options
+      ...options,
+      model: deepgramModel  // Ensure mapped model overrides any model in options
     };
 
     try {
@@ -246,7 +256,9 @@ class TTSService extends EventEmitter {
       const startTime = Date.now();
       
       // Step 1: Generate speech
-      const audioStream = await this.getSpeech(text, options.ttsConfig);
+      // Handle both calling patterns: { model: 'voice' } and { ttsConfig: { model: 'voice' } }
+      const ttsOptions = options.ttsConfig || options;
+      const audioStream = await this.getSpeech(text, ttsOptions);
       const generationTime = Date.now() - startTime;
 
       // Step 2: Stream to Twilio

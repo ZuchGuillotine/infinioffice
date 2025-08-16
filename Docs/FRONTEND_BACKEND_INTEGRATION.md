@@ -27,8 +27,12 @@ This document outlines the integration points between the React frontend and Nod
 - `GET /api/calls/analytics/summary` - Get call analytics
 - `GET /api/calls/analytics/performance` - Get performance metrics
 
-### Voice (`/voice`)
+### Voice (`/api/voice`)
 - `POST /voice` - Twilio webhook for incoming calls
+- `GET /api/voice/settings` - Get organization voice settings
+- `POST /api/voice/settings` - Update voice model selection (requires admin/operator role)
+- `POST /api/voice/test` - Test voice with custom text and selected model
+- `GET /api/voice/available` - Get list of available voice options
 
 ## Data Models
 
@@ -75,7 +79,13 @@ This document outlines the integration points between the React frontend and Nod
   escalationNumber: "string?",
   smsCopy: "string?",
   greeting: "string?",
-  timezone: "America/New_York"
+  timezone: "America/New_York",
+  voiceSettings: {
+    voiceModel: "saturn|harmonia|hera|zeus",
+    speed: 1.0,
+    pitch: 1.0,
+    updatedAt: "datetime"
+  }
 }
 ```
 
@@ -538,3 +548,89 @@ Based on comprehensive code review and manual testing, the frontend-backend inte
 ### Conclusion
 
 The frontend-backend integration foundation is solid with comprehensive API coverage and proper architecture. The critical issues are primarily UI-layer problems (input handling, navigation) rather than fundamental integration failures. Addressing the high-priority onboarding issues will unlock user testing and feedback collection to guide further development.
+
+---
+
+## Voice Selection Feature Implementation (August 2025)
+
+### Overview
+Successfully implemented comprehensive voice selection feature allowing organizations to choose from multiple Deepgram TTS voices with real-time testing and seamless voice pipeline integration.
+
+### Implementation Details
+
+#### Frontend Components
+- **VoiceSettingsEditor Component**: Complete UI for voice selection with:
+  - Visual voice cards for Saturn, Harmonia, Hera, Zeus voices
+  - Real-time voice testing with custom script input
+  - Status indicators and loading states
+  - Integration with organization-specific settings
+
+#### Backend Integration
+- **Voice Settings API** (`/api/voice/settings`):
+  - GET endpoint returns current organization voice settings
+  - POST endpoint updates voice selection with role-based access control
+  - Automatic organization context cache invalidation on changes
+
+- **Voice Testing API** (`/api/voice/test`):
+  - Real-time voice preview with custom text
+  - Audio streaming response for immediate playback
+  - Support for all available voice models
+
+- **Voice Model Mapping System**:
+  - Translates user-friendly names (saturn, harmonia, hera, zeus) to Deepgram API format (aura-2-*-en)
+  - Handles multiple TTS calling patterns throughout the voice pipeline
+  - Ensures voice selection consistency across greeting and conversation TTS
+
+#### Key Technical Solutions
+
+1. **Authentication Integration**:
+   ```javascript
+   // Fixed: Replace manual token handling with API client
+   const config = await apiClient.get('/voice/settings')
+   await apiClient.post('/voice/settings', { voiceModel: selectedVoice })
+   ```
+
+2. **Voice Model Mapping**:
+   ```javascript
+   const voiceModelMap = {
+     'saturn': 'aura-2-saturn-en',
+     'harmonia': 'aura-2-harmonia-en', 
+     'hera': 'aura-2-hera-en',
+     'zeus': 'aura-2-zeus-en'
+   };
+   ```
+
+3. **TTS Configuration Fix**:
+   ```javascript
+   // Critical fix: Ensure mapped model overrides spread options
+   const config = {
+     encoding: 'mulaw',
+     sample_rate: 8000,
+     container: 'none',
+     ...options,
+     model: deepgramModel  // Must be last to override options.model
+   };
+   ```
+
+#### Integration Points
+
+- **Organization Context**: Voice settings automatically cached and invalidated
+- **Role-Based Access**: Admin/operator roles required for voice changes
+- **Voice Pipeline**: Selected voice applies to both greeting and conversation TTS
+- **Real-time Updates**: Settings changes immediately affect new calls
+
+#### Testing & Validation
+
+- Manual testing confirmed voice selection persists and applies correctly
+- Audio preview functionality working across all voice models
+- Authentication flows properly integrated with organization context
+- Voice model mapping verified with Deepgram API requirements
+
+### Business Impact
+
+- **Enhanced Customization**: Organizations can now match voice personality to brand
+- **Professional Variety**: Four distinct voice options (authoritative male, warm female, professional female, commanding male)
+- **User Experience**: Real-time testing eliminates guesswork in voice selection
+- **Technical Foundation**: Architecture supports future voice feature expansion
+
+This implementation represents a significant enhancement to the voice agent platform, providing organizations with meaningful customization options while maintaining technical reliability and performance.

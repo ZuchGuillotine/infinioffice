@@ -85,7 +85,7 @@ async function onboardingRoutes(fastify, options) {
                 allowDoubleBooking: false
               },
               voiceSettings: {
-                voiceModel: 'aura-asteria-en',
+                voiceModel: 'harmonia',
                 speed: 1.0,
                 pitch: 1.0
               }

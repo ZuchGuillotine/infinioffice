@@ -129,6 +129,7 @@ class EnhancedVoicePipeline {
         ...currentSnapshot.context,
         state: currentSnapshot.value,
         turnIndex,
+        turnCount: session.turnCount,
         callId
       };
 

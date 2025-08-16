@@ -126,15 +126,7 @@ class STTService extends EventEmitter {
     const handleTranscriptEvent = (data) => {
       if (!data) return;
       
-      console.log('STT: Received transcript event:', {
-        type: data.type,
-        is_final: data.is_final,
-        speech_final: data.speech_final,
-        hasChannel: !!data.channel,
-        hasAlternatives: !!(data.channel && data.channel.alternatives)
-      });
-      
-      // Handle v4 SDK Results events
+      // Only log non-empty transcript events to reduce noise
       if (data.type === 'Results' && data.channel && data.channel.alternatives) {
         const alt = data.channel.alternatives[0];
         if (!alt) return;
@@ -142,12 +134,15 @@ class STTService extends EventEmitter {
         const transcript = (alt.transcript || '').trim();
         const confidence = alt.confidence || 0;
 
-        console.log('STT: Processing transcript:', {
-          transcript,
-          confidence,
-          is_final: data.is_final,
-          speech_final: data.speech_final
-        });
+        // Only log if there's actual content or important final results
+        if (transcript.length > 0 || (data.is_final && data.speech_final)) {
+          console.log('STT: Processing transcript:', {
+            transcript,
+            confidence,
+            is_final: data.is_final,
+            speech_final: data.speech_final
+          });
+        }
 
         // Only emit if there's actual transcript content
         if (transcript) {

@@ -360,19 +360,25 @@ INTENT CATEGORIES:
 2. service_provided - User specified service (e.g., "haircut", "consultation", "repair", "quote for tree removal")
 3. time_provided - User specified time (e.g., "Thursday at 3PM", "tomorrow 2pm", "next Friday morning", "Monday") 
 4. contact_provided - User gave contact info (name, phone, email)
-5. location_provided - User specified location preference or address (e.g., "652 Cherry Avenue", "at my house")
+5. location_provided - User specified location preference or address (e.g., "652 Cherry Avenue", "at my house", "it's at 6969 Bing Bong Avenue")
 6. location_preference - User indicated on-site vs at-business preference
 7. confirmation_yes - User confirmed (yes, correct, that's right)
 8. confirmation_no - User declined (no, wrong, change that)
 9. digression_question - User asked about hours/location/services/pricing
 10. unclear - Cannot determine intent clearly
 
+CRITICAL ADDRESS DETECTION:
+- "It's at [address]" → location_provided
+- "Yeah, it's at [address]" → location_provided 
+- "[Number] [Street Name]" → location_provided
+- "At my house/property/place" → location_provided
+
 IMPORTANT: If user provides multiple types of info in one statement, choose the PRIMARY intent but extract ALL entities.
 Example: "Thursday at 3PM at 652 Cherry Avenue" → intent: time_provided, but extract BOTH timeWindow AND location.
 
 SERVICE MATCHING RULES:
 - "Quote", "bid", "estimate", "pricing" → "Quote or Bid" (this is ONE service)
-- "Tree removal", "remove tree", "take down tree", "tree falling" → "Tree Falling"
+- "Tree removal", "remove tree", "take down tree", "tree falling", "taken down", "cut down", "alders taken down", "trees taken down" → "Tree Falling"
 - "Stump", "stump removal", "stump grinding" → "Stump Grinding"
 - "Cleanup", "clean up", "debris removal" → "Cleanup"  
 - "Chip drop", "wood chips", "mulch delivery" → "Chip Drop"
@@ -381,12 +387,17 @@ ENTITY EXTRACTION:
 - service: Match against available services using the rules above
   * Extract the best-matching service name from available options
   * Capture additional details (e.g., "oak tree", "large stump") in a details field
-- timeWindow: ANY time/date reference (e.g., "Thursday at 3PM", "tomorrow morning", "next week", "Monday", "2pm")
+- timeWindow: ANY time/date reference (e.g., "Thursday at 3PM", "tomorrow morning", "next week", "Monday", "2pm", "Thursday at three")
 - contact: Phone numbers, names, emails (e.g., "555-1234", "John Smith", "john@email.com")
-- location: Addresses, branch preferences, on-site requests (e.g., "652 Cherry Avenue", "downtown location", "my house")
+- location: Addresses, branch preferences, on-site requests (e.g., "652 Cherry Avenue", "6969 Bing Bong Avenue", "downtown location", "my house")
 - details: Additional context about the service (tree type, size, etc.)
 
-CRITICAL: Always extract time, location, and contact info when mentioned, even if mentioned with other information.
+CRITICAL MULTI-ENTITY EXTRACTION:
+- ALWAYS extract ALL entities present in the statement, regardless of primary intent
+- If customer says "It's at 6969 Bing Bong Avenue and Thursday at 3 would work", extract BOTH location AND timeWindow
+- Even if primary intent is location_provided, still capture any time mentions
+- Even if primary intent is time_provided, still capture any location mentions
+- Customer may provide confirmation + additional info in one statement
 
 LOCATION HANDLING:
 ${locationMode === 'on_site' ? '- This business provides on-site services - extract addresses' : ''}
@@ -469,6 +480,7 @@ Keep responses under 50 tokens except for final confirmations.`;
 class EnhancedResponseGenerator {
   constructor() {
     this.responseCache = new Map(); // Cache for frequently used responses
+    this.responseHistory = new Map(); // Session -> response history
   }
 
   async generateResponse(intent, context, attemptNumber = 1) {
@@ -505,6 +517,15 @@ class EnhancedResponseGenerator {
       // Cache successful responses
       if (result.message && result.message.length < 150) {
         this.responseCache.set(cacheKey, result);
+      }
+      
+      // Track response history to prevent repetition
+      const sessionId = context.sessionId || 'default';
+      const history = this.responseHistory.get(sessionId) || [];
+      if (result.message) {
+        history.push(result.message);
+        // Keep only last 3 responses to prevent memory growth
+        this.responseHistory.set(sessionId, history.slice(-3));
       }
       
       console.log('✅ Response Generated:', {
@@ -557,6 +578,10 @@ CONVERSATION STYLE:
 - Collect extra details that would help a human scheduler: tree size, urgency, access concerns, etc.
 - Be verbose and natural - don't be afraid to chat while collecting info
 - Show genuine interest: "Oak trees are beautiful but they can be quite large!" "652 Cherry Avenue - I know that area!"
+- CRITICAL: NEVER repeat the same response in a conversation - if you already asked a question, don't ask it again
+- If customer repeats themselves, acknowledge: "Right, you mentioned that! Let me..." instead of asking again
+- VARY your responses - don't repeat the same phrases or questions in the same conversation
+- Mix up your enthusiasm and question styles to keep conversation fresh
 
 RESPONSE REQUIREMENTS:
 - Keep responses under 150 tokens but be naturally verbose and chatty
@@ -566,6 +591,8 @@ RESPONSE REQUIREMENTS:
 - Move conversation forward smoothly while building rapport
 - Don't repeat the same response - adapt and build on what they just said
 - Collect useful extra context for the human who will handle the actual service
+- CRITICAL: If customer provides multiple pieces of info (address AND time), acknowledge BOTH: "Perfect! So that's 6969 Bing Bong Avenue on Thursday at 3 PM"
+- Always acknowledge the combination of information provided, don't focus on just one piece
 
 TOOLS AVAILABLE:
 - request_slot: Ask for missing information naturally
@@ -579,8 +606,11 @@ TOOLS AVAILABLE:
 IMPORTANT RULES:
 - "Quote or Bid" is ONE service, not two - never ask customer to choose between quote and bid
 - When customer says "quote" and you have "Quote or Bid" service, that's a match - proceed to next step
+- When you successfully match a service, CONFIRM it and move forward - don't ask for clarification
 - Always reference specific details they mentioned (tree type, location, etc.)
-- Sound conversational: "Great! So you need a quote for removing that oak tree. When would work best for you?"
+- CONFIRM matches: "Perfect! So you need those alders taken down - that's our Tree Falling service. When would work best for you?"
+- Only use clarify_service tool if genuinely ambiguous between DIFFERENT services - not for confirmation
+- If customer says "trees taken down", "alders removed", "cut down trees" → confidently map to Tree Falling and confirm
 
 Use tools to take actions, but make the conversation flow naturally.`;
   }
@@ -588,15 +618,39 @@ Use tools to take actions, but make the conversation flow naturally.`;
   buildUserMessage(intent, context) {
     const parts = [`User intent: ${intent}`];
     
-    if (context.service) parts.push(`Service mentioned: ${context.service}`);
-    if (context.entities?.details) parts.push(`Additional details: ${context.entities.details}`);
-    if (context.timeWindow) parts.push(`Time mentioned: ${context.timeWindow}`);
-    if (context.contact) parts.push(`Contact provided: ${context.contact}`);
-    if (context.locationKind) parts.push(`Location type: ${context.locationKind}`);
+    // Group entity information for better multi-entity awareness
+    const entityInfo = [];
+    if (context.service) entityInfo.push(`service: ${context.service}`);
+    if (context.timeWindow) entityInfo.push(`time: ${context.timeWindow}`);
+    if (context.contact) entityInfo.push(`contact: ${context.contact}`);
+    if (context.locationKind || context.entities?.location) entityInfo.push(`location: ${context.locationKind || context.entities?.location}`);
+    if (context.entities?.details) entityInfo.push(`details: ${context.entities.details}`);
+    
+    if (entityInfo.length > 0) {
+      parts.push(`Information provided: ${entityInfo.join(', ')}`);
+    }
     
     // Add conversational context from recent transcript
     if (context.lastTranscript) {
       parts.push(`Customer just said: "${context.lastTranscript}"`);
+    }
+    
+    // Highlight if multiple entities were provided in this turn
+    if (entityInfo.length > 1) {
+      parts.push(`IMPORTANT: Customer provided multiple pieces of information - acknowledge ALL of them in your response`);
+    }
+    
+    // Add conversation turn count to encourage variation
+    if (context.turnCount) {
+      parts.push(`Turn ${context.turnCount} in conversation - vary your response style`);
+    }
+    
+    // Add recent response history to avoid repetition
+    const sessionId = context.sessionId || 'default';
+    const recentResponses = this.responseHistory.get(sessionId) || [];
+    if (recentResponses.length > 0) {
+      const lastResponse = recentResponses[recentResponses.length - 1];
+      parts.push(`Your last response was: "${lastResponse}" - do NOT repeat this`);
     }
     
     return parts.join('. ');
@@ -758,7 +812,7 @@ class EnhancedLLMService {
       
       const responseResult = await this.responseGenerator.generateResponse(
         intentResult.intent,
-        { ...context, ...intentResult.entities, lastTranscript: transcript },
+        { ...context, ...intentResult.entities, lastTranscript: transcript, turnCount: context.turnCount || 1 },
         attemptNumber
       );
       const responseMs = Date.now() - responseStartTime;
@@ -1043,6 +1097,7 @@ class EnhancedLLMService {
   clearSession(sessionId) {
     this.sessionManager.delete(sessionId);
     this.intentDetector.clearHistory(sessionId);
+    this.responseGenerator.responseHistory.delete(sessionId);
   }
 }
 

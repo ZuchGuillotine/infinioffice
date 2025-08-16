@@ -127,6 +127,7 @@ fastify.register(async function (fastify) {
   await fastify.register(servicesRoutes, { prefix: '/api/services' });
   await fastify.register(onboardingRoutes, { prefix: '/api/onboarding' });
   await fastify.register(voiceRoutes, { prefix: '/api/voice' });
+  await fastify.register(require('./routes/business-config'), { prefix: '/api/business-config' });
 });
 
 // Voice webhook endpoint
@@ -188,6 +189,11 @@ fastify.register(async function (fastify) {
     let silenceTimeout = null;
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
+    // Turn buffering for handling continuous speech broken into fragments
+    let turnBuffer = '';
+    let turnBufferTimeout = null;
+    let lastFinalTranscriptTime = 0;
+    
     console.log('Session initialized:', sessionId);
     
     // Enhanced voice pipeline session will be initialized when organization context is loaded
@@ -220,8 +226,37 @@ fastify.register(async function (fastify) {
     sttService.on('transcript', async (data) => {
       if (data.isFinal && !isProcessingTurn && data.text.trim().length > 0) {
         console.log(`Final transcript: "${data.text}" (confidence: ${data.confidence})`);
-        console.log(`Processing turn - isProcessingTurn: ${isProcessingTurn}`);
-        await processTurn(data.text, data.confidence);
+        
+        // Buffer this transcript to handle continuous speech fragments
+        const currentTime = Date.now();
+        const timeSinceLastFinal = currentTime - lastFinalTranscriptTime;
+        lastFinalTranscriptTime = currentTime;
+        
+        // If this is likely a continuation of the previous speech (within 2 seconds), buffer it
+        if (timeSinceLastFinal < 2000 && turnBuffer.length > 0) {
+          turnBuffer += ' ' + data.text.trim();
+          console.log(`Buffering transcript continuation: "${turnBuffer}"`);
+        } else {
+          // Start new turn buffer
+          turnBuffer = data.text.trim();
+          console.log(`Starting new turn buffer: "${turnBuffer}"`);
+        }
+        
+        // Clear any existing timeout
+        if (turnBufferTimeout) {
+          clearTimeout(turnBufferTimeout);
+        }
+        
+        // Set timeout to process the buffered turn after 1.5 seconds of no new finals
+        turnBufferTimeout = setTimeout(async () => {
+          if (turnBuffer && !isProcessingTurn) {
+            console.log(`Processing buffered turn - isProcessingTurn: ${isProcessingTurn}`);
+            const bufferToProcess = turnBuffer;
+            turnBuffer = ''; // Clear buffer before processing
+            await processTurn(bufferToProcess, data.confidence);
+          }
+        }, 1500); // 1.5 second buffer window
+        
       } else if (!data.isFinal && data.text.trim().length > 0) {
         console.log(`Interim transcript: "${data.text}"`);
         // Reset conversation timeout on any speech activity
@@ -313,7 +348,7 @@ fastify.register(async function (fastify) {
                       organizationContext.businessConfig?.scripts?.greeting ||
                       FALLBACK_GREETING;
       
-      const voiceModel = organizationContext.businessConfig?.voiceSettings?.voiceModel || 'aura-asteria-en';
+      const voiceModel = organizationContext.businessConfig?.voiceSettings?.voiceModel || 'harmonia';
       
       console.log('📢 Sending CUSTOM greeting for:', organizationContext.organizationName);
       
@@ -339,7 +374,12 @@ fastify.register(async function (fastify) {
       console.error('❌ Error sending custom greeting:', error);
       // Fallback to basic greeting
       try {
-        await ttsService.generateAndStream(FALLBACK_GREETING, ws, { streamId: streamSid });
+        await ttsService.generateAndStream(FALLBACK_GREETING, ws, { 
+          streamId: streamSid,
+          ttsConfig: {
+            model: organizationContext?.businessConfig?.voiceSettings?.voiceModel || 'harmonia'
+          }
+        });
       } catch (fallbackError) {
         console.error('❌ Error sending fallback greeting:', fallbackError);
       }
@@ -436,7 +476,12 @@ fastify.register(async function (fastify) {
       });
       
       const ttsStartTime = Date.now();
-      const ttsResult = await ttsService.generateAndStream(responseText, ws, { streamId: streamSid });
+      const ttsResult = await ttsService.generateAndStream(responseText, ws, { 
+        streamId: streamSid,
+        ttsConfig: {
+          model: organizationContext?.businessConfig?.voiceSettings?.voiceModel || 'harmonia'
+        }
+      });
       const ttsMs = Date.now() - ttsStartTime;
       
       console.log('✅ TTS completed:', {
@@ -485,8 +530,10 @@ fastify.register(async function (fastify) {
   };
 
   // Handle prolonged silence with contextual responses
+  let silenceCount = 0; // Track how many times silence has been handled
   const handleSilence = async () => {
     try {
+      silenceCount++;
       let timeoutResponse = "I'm here when you're ready. Take your time!";
       
       // Make response contextual based on conversation state
@@ -499,19 +546,46 @@ fastify.register(async function (fastify) {
             const { service, timeWindow, contact } = enhancedState.context;
             
             if (service && !timeWindow) {
-              timeoutResponse = `No rush! Just let me know when you'd like to schedule that ${service} service.`;
+              // Vary the timeout messages for the same context
+              const serviceResponses = [
+                `No rush! Just let me know when you'd like to schedule that ${service} service.`,
+                `Take your time thinking about timing for that ${service} work.`,
+                `Whenever you're ready to talk about scheduling that ${service}, I'm here!`,
+                `No hurry - let me know what works for your ${service} appointment.`
+              ];
+              timeoutResponse = serviceResponses[silenceCount % serviceResponses.length];
             } else if (service && timeWindow && !contact) {
-              timeoutResponse = `Take your time! I just need your contact info when you're ready.`;
+              const contactResponses = [
+                `Take your time! I just need your contact info when you're ready.`,
+                `No rush - just need a phone number or name to reach you at.`,
+                `Whenever you're ready, I'll need your contact details to complete this.`
+              ];
+              timeoutResponse = contactResponses[silenceCount % contactResponses.length];
             } else if (!service) {
-              timeoutResponse = `I'm here when you're ready. What service can I help you schedule today?`;
+              const generalResponses = [
+                `I'm here when you're ready. What service can I help you schedule today?`,
+                `Take your time! What kind of service are you looking for?`,
+                `No rush at all - what can I help you schedule?`
+              ];
+              timeoutResponse = generalResponses[silenceCount % generalResponses.length];
             } else {
-              timeoutResponse = `No worries, take your time thinking it over. I'm here when you're ready!`;
+              const thinkingResponses = [
+                `No worries, take your time thinking it over. I'm here when you're ready!`,
+                `Take all the time you need! I'll be right here when you're ready to continue.`,
+                `No rush at all - let me know if you have any questions!`
+              ];
+              timeoutResponse = thinkingResponses[silenceCount % thinkingResponses.length];
             }
           }
         }
       }
       
-      await ttsService.generateAndStream(timeoutResponse, ws, { streamId: streamSid });
+              await ttsService.generateAndStream(timeoutResponse, ws, { 
+          streamId: streamSid,
+          ttsConfig: {
+            model: organizationContext?.businessConfig?.voiceSettings?.voiceModel || 'harmonia'
+          }
+        });
       resetConversationTimeout();
     } catch (error) {
       console.error('Error handling silence:', error);
@@ -522,7 +596,12 @@ fastify.register(async function (fastify) {
   const handleProcessingError = async (error) => {
     try {
       const errorResponse = "I'm sorry, I'm experiencing technical difficulties. Could you please repeat that?";
-      await ttsService.generateAndStream(errorResponse, ws, { streamId: streamSid });
+              await ttsService.generateAndStream(errorResponse, ws, { 
+          streamId: streamSid,
+          ttsConfig: {
+            model: organizationContext?.businessConfig?.voiceSettings?.voiceModel || 'harmonia'
+          }
+        });
       
       if (callId) {
         await updateCall(callId, {
@@ -621,7 +700,12 @@ fastify.register(async function (fastify) {
     try {
       console.log('Conversation timeout reached');
       const timeoutMessage = "I haven't heard from you in a while. If you'd like to schedule an appointment, please call back. Have a great day!";
-      await ttsService.generateAndStream(timeoutMessage, ws, { streamId: streamSid });
+              await ttsService.generateAndStream(timeoutMessage, ws, { 
+          streamId: streamSid,
+          ttsConfig: {
+            model: organizationContext?.businessConfig?.voiceSettings?.voiceModel || 'harmonia'
+          }
+        });
       
       if (callId) {
         await updateCall(callId, {
@@ -772,7 +856,12 @@ fastify.register(async function (fastify) {
                             FALLBACK_GREETING;
             
             try {
-              await ttsService.generateAndStream(greeting, ws, { streamId: streamSid });
+              await ttsService.generateAndStream(greeting, ws, { 
+          streamId: streamSid,
+          ttsConfig: {
+            model: organizationContext?.businessConfig?.voiceSettings?.voiceModel || 'harmonia'
+          }
+        });
               console.log('✅ Fallback greeting sent successfully');
             } catch (error) {
               console.error('❌ Error sending fallback greeting:', error);
@@ -842,6 +931,7 @@ fastify.register(async function (fastify) {
     // Clear timeouts
     if (conversationTimeout) clearTimeout(conversationTimeout);
     if (silenceTimeout) clearTimeout(silenceTimeout);
+    if (turnBufferTimeout) clearTimeout(turnBufferTimeout);
     
     // Clean up session
     sessionManager.clearSession(sessionId);
@@ -880,6 +970,7 @@ fastify.register(async function (fastify) {
     // Clear timeouts
     if (conversationTimeout) clearTimeout(conversationTimeout);
     if (silenceTimeout) clearTimeout(silenceTimeout);
+    if (turnBufferTimeout) clearTimeout(turnBufferTimeout);
     
     // Log websocket error
     /* if (callId) {

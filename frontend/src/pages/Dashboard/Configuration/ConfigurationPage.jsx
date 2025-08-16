@@ -3,6 +3,7 @@ import ServicesEditor from './ServicesEditor.jsx'
 import BusinessInfoEditor from './BusinessInfoEditor.jsx'
 import SchedulingEditor from './SchedulingEditor.jsx'
 import VoiceScriptEditor from './VoiceScriptEditor.jsx'
+import VoiceSettingsEditor from './VoiceSettingsEditor.jsx'
 
 export default function ConfigurationPage() {
   const tabs = [
@@ -10,6 +11,7 @@ export default function ConfigurationPage() {
     { to: 'services', label: 'Services' },
     { to: 'scheduling', label: 'Scheduling' },
     { to: 'voice', label: 'Voice Scripts' },
+    { to: 'voice-settings', label: 'Voice Settings' },
   ]
   return (
     <div>
@@ -24,6 +26,7 @@ export default function ConfigurationPage() {
         <Route path="services" element={<ServicesEditor />} />
         <Route path="scheduling" element={<SchedulingEditor />} />
         <Route path="voice" element={<VoiceScriptEditor />} />
+        <Route path="voice-settings" element={<VoiceSettingsEditor />} />
       </Routes>
     </div>
   )
