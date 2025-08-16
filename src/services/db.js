@@ -1,14 +1,17 @@
-const { PrismaClient } = require('@prisma/client');
+const { getDatabase } = require('../config/database');
 
-const prisma = new PrismaClient();
+// Remove module-level Prisma client to avoid circular dependencies
+// const prisma = new PrismaClient();
 
 // Appointment functions
 const createAppointment = async (data) => {
+  const prisma = await getDatabase();
   const appointment = await prisma.appointment.create({ data });
   return appointment;
 };
 
 const getAppointments = async () => {
+  const prisma = await getDatabase();
   const appointments = await prisma.appointment.findMany();
   return appointments;
 };
@@ -16,6 +19,7 @@ const getAppointments = async () => {
 // Call tracking functions
 const createCall = async (data) => {
   try {
+    const prisma = await getDatabase();
     const call = await prisma.call.create({ data });
     return call;
   } catch (error) {
@@ -26,6 +30,7 @@ const createCall = async (data) => {
 
 const updateCall = async (callId, updates) => {
   try {
+    const prisma = await getDatabase();
     const call = await prisma.call.update({
       where: { id: callId },
       data: updates
@@ -39,6 +44,7 @@ const updateCall = async (callId, updates) => {
 
 const getCall = async (callId) => {
   try {
+    const prisma = await getDatabase();
     const call = await prisma.call.findUnique({
       where: { id: callId },
       include: { turns: true }
@@ -53,6 +59,7 @@ const getCall = async (callId) => {
 // Turn tracking functions
 const createTurn = async (data) => {
   try {
+    const prisma = await getDatabase();
     const turn = await prisma.turn.create({ data });
     return turn;
   } catch (error) {
@@ -63,6 +70,7 @@ const createTurn = async (data) => {
 
 const updateTurn = async (turnId, updates) => {
   try {
+    const prisma = await getDatabase();
     const turn = await prisma.turn.update({
       where: { id: turnId },
       data: updates
@@ -76,6 +84,7 @@ const updateTurn = async (turnId, updates) => {
 
 const getTurnsByCall = async (callId) => {
   try {
+    const prisma = await getDatabase();
     const turns = await prisma.turn.findMany({
       where: { callId },
       orderBy: { timestamp: 'asc' }
@@ -90,6 +99,7 @@ const getTurnsByCall = async (callId) => {
 // Analytics functions
 const getCallStats = async (dateRange = {}) => {
   try {
+    const prisma = await getDatabase();
     const where = {};
     if (dateRange.start) where.startedAt = { gte: dateRange.start };
     if (dateRange.end) where.startedAt = { ...where.startedAt, lte: dateRange.end };

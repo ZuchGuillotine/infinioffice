@@ -45,16 +45,37 @@ const { createCall, createTurn, updateTurn, updateCall } = require('./services/d
 const { performanceMonitor } = require('./services/performance');
 const { OrganizationContextService } = require('./services/organizationContext');
 
-// Import enhanced voice agent services
-const { EnhancedVoicePipeline } = require('./services/enhancedVoicePipeline');
-const { isEnhancedEnabled, getEnhancedConfig } = require('./config/enhancedVoice');
+// Import enhanced voice agent services with lazy loading
+let EnhancedVoicePipeline = null;
+let isEnhancedEnabled = null;
+let getEnhancedConfig = null;
 
-// Create global enhanced voice pipeline instance for health checks
-const globalEnhancedVoicePipeline = new EnhancedVoicePipeline({
-  enableEnhancedFeatures: true,
-  fallbackToLegacy: true,
-  telemetryEnabled: true
-});
+// Lazy load enhanced voice services to prevent circular dependencies
+function getEnhancedServices() {
+  if (!EnhancedVoicePipeline) {
+    const voicePipelineModule = require('./services/enhancedVoicePipeline');
+    const enhancedConfigModule = require('./config/enhancedVoice');
+    
+    EnhancedVoicePipeline = voicePipelineModule.EnhancedVoicePipeline;
+    isEnhancedEnabled = enhancedConfigModule.isEnhancedEnabled;
+    getEnhancedConfig = enhancedConfigModule.getEnhancedConfig;
+  }
+  return { EnhancedVoicePipeline, isEnhancedEnabled, getEnhancedConfig };
+}
+
+// Lazy global enhanced voice pipeline instance for health checks
+let globalEnhancedVoicePipeline = null;
+function getGlobalEnhancedVoicePipeline() {
+  if (!globalEnhancedVoicePipeline) {
+    const { EnhancedVoicePipeline } = getEnhancedServices();
+    globalEnhancedVoicePipeline = new EnhancedVoicePipeline({
+      enableEnhancedFeatures: true,
+      fallbackToLegacy: true,
+      telemetryEnabled: true
+    });
+  }
+  return globalEnhancedVoicePipeline;
+}
 
 // Default greeting for fallback scenarios only
 const FALLBACK_GREETING = "Hello! Thank you for calling. I'm here to help you schedule an appointment. How can I assist you today?";
@@ -141,12 +162,19 @@ fastify.register(async function (fastify) {
     const sttService = new STTService();
     const ttsService = new TTSService();
     
-    // Initialize enhanced voice pipeline (with fallback to legacy)
-    const enhancedVoicePipeline = new EnhancedVoicePipeline({
-      enableEnhancedFeatures: true,
-      fallbackToLegacy: true,
-      telemetryEnabled: true
-    });
+    // Initialize enhanced voice pipeline (with fallback to legacy) - lazy loaded
+    let enhancedVoicePipeline = null;
+    function getEnhancedVoicePipeline() {
+      if (!enhancedVoicePipeline) {
+        const { EnhancedVoicePipeline } = getEnhancedServices();
+        enhancedVoicePipeline = new EnhancedVoicePipeline({
+          enableEnhancedFeatures: true,
+          fallbackToLegacy: true,
+          telemetryEnabled: true
+        });
+      }
+      return enhancedVoicePipeline;
+    }
     
     // Enhanced voice pipeline session will be initialized when organization context is loaded
     let enhancedSession = null;
@@ -184,8 +212,9 @@ fastify.register(async function (fastify) {
         sttService.flushAudioQueue();
       }
       
-      // Wait for organization context before sending greeting
-      console.log('🚀 STT ready - waiting for organization context to send custom greeting');
+      // Check if we can send greeting now (in case org context is already loaded)
+      console.log('🚀 STT ready - checking if we can send custom greeting');
+      tryToSendGreeting();
     });
 
     sttService.on('transcript', async (data) => {
@@ -205,8 +234,11 @@ fastify.register(async function (fastify) {
       ttsService.interruptStream();
       
       // Notify enhanced voice pipeline of barge-in if available
-      if (enhancedSession && isEnhancedEnabled(organizationContext)) {
-        enhancedVoicePipeline.handleBargeIn(sessionId);
+      if (enhancedSession) {
+        const { isEnhancedEnabled } = getEnhancedServices();
+        if (isEnhancedEnabled(organizationContext)) {
+          getEnhancedVoicePipeline().handleBargeIn(sessionId);
+        }
       }
       
       resetConversationTimeout();
@@ -217,8 +249,11 @@ fastify.register(async function (fastify) {
       clearSilenceTimeout();
       
       // Notify enhanced voice pipeline if available
-      if (enhancedSession && isEnhancedEnabled(organizationContext)) {
-        enhancedVoicePipeline.handleSpeechEvent(sessionId, 'speechStarted');
+      if (enhancedSession) {
+        const { isEnhancedEnabled } = getEnhancedServices();
+        if (isEnhancedEnabled(organizationContext)) {
+          getEnhancedVoicePipeline().handleSpeechEvent(sessionId, 'speechStarted');
+        }
       }
     });
 
@@ -230,8 +265,11 @@ fastify.register(async function (fastify) {
       }
       
       // Notify enhanced voice pipeline if available
-      if (enhancedSession && isEnhancedEnabled(organizationContext)) {
-        enhancedVoicePipeline.handleSpeechEvent(sessionId, 'speechEnded');
+      if (enhancedSession) {
+        const { isEnhancedEnabled } = getEnhancedServices();
+        if (isEnhancedEnabled(organizationContext)) {
+          getEnhancedVoicePipeline().handleSpeechEvent(sessionId, 'speechEnded');
+        }
       }
     });
 
@@ -243,8 +281,11 @@ fastify.register(async function (fastify) {
       }
       
       // Notify enhanced voice pipeline if available
-      if (enhancedSession && isEnhancedEnabled(organizationContext)) {
-        enhancedVoicePipeline.handleSpeechEvent(sessionId, 'silence');
+      if (enhancedSession) {
+        const { isEnhancedEnabled } = getEnhancedServices();
+        if (isEnhancedEnabled(organizationContext)) {
+          getEnhancedVoicePipeline().handleSpeechEvent(sessionId, 'silence');
+        }
       }
     });
 
@@ -305,14 +346,25 @@ fastify.register(async function (fastify) {
     }
   };
 
-  // Send greeting immediately when organization context is available
-  const handleOrganizationContextLoaded = async () => {
-    if (!organizationContextLoaded && organizationContext && sttReady && streamStarted && !greetingSent) {
-      organizationContextLoaded = true;
+  // Send greeting when all conditions are met
+  const tryToSendGreeting = async () => {
+    console.log('🔍 Checking greeting conditions:', {
+      hasOrganizationContext: !!organizationContext,
+      sttReady,
+      streamStarted,
+      greetingSent,
+      streamSid: !!streamSid
+    });
+    
+    // All conditions must be met: org context loaded, STT ready, stream started, greeting not sent, and we have streamSid
+    if (organizationContext && sttReady && streamStarted && !greetingSent && streamSid) {
       greetingSent = true;
-      console.log('🚀 Organization context loaded - sending custom greeting immediately');
+      organizationContextLoaded = true;
+      console.log('🚀 All conditions met - sending custom greeting now!');
       await sendCustomGreeting();
+      return true;
     }
+    return false;
   };
 
   // Process a complete turn using enhanced voice pipeline
@@ -332,9 +384,10 @@ fastify.register(async function (fastify) {
 
       let responseText;
       
+      const { isEnhancedEnabled } = getEnhancedServices();
       if (enhancedSession && isEnhancedEnabled(organizationContext)) {
         // Use enhanced voice pipeline for turn processing
-        const enhancedResult = await enhancedVoicePipeline.processTurn(
+        const enhancedResult = await getEnhancedVoicePipeline().processTurn(
           sessionId,
           transcript,
           confidence,
@@ -409,10 +462,13 @@ fastify.register(async function (fastify) {
       turnIndex++;
 
       // Check for final state using enhanced pipeline if available
-      if (enhancedSession && isEnhancedEnabled(organizationContext)) {
-        const enhancedState = enhancedVoicePipeline.getSessionState(sessionId);
-        if (enhancedState && (enhancedState.state === 'bookingSuccess' || enhancedState.state === 'conversationComplete' || enhancedState.state === 'escalateToHuman')) {
-          await handleConversationEnd(enhancedState);
+      if (enhancedSession) {
+        const { isEnhancedEnabled } = getEnhancedServices();
+        if (isEnhancedEnabled(organizationContext)) {
+          const enhancedState = getEnhancedVoicePipeline().getSessionState(sessionId);
+          if (enhancedState && (enhancedState.state === 'bookingSuccess' || enhancedState.state === 'conversationComplete' || enhancedState.state === 'escalateToHuman')) {
+            await handleConversationEnd(enhancedState);
+          }
         }
       }
 
@@ -498,10 +554,13 @@ fastify.register(async function (fastify) {
     });
 
     // Finalize enhanced voice pipeline session if it exists
-    if (enhancedSession && isEnhancedEnabled(organizationContext)) {
+    if (enhancedSession) {
       try {
-        const finalMetrics = enhancedVoicePipeline.finalizeSession(sessionId);
-        console.log('Enhanced session finalized with metrics:', finalMetrics);
+        const { isEnhancedEnabled } = getEnhancedServices();
+        if (isEnhancedEnabled(organizationContext)) {
+          const finalMetrics = getEnhancedVoicePipeline().finalizeSession(sessionId);
+          console.log('Enhanced session finalized with metrics:', finalMetrics);
+        }
       } catch (error) {
         console.error('Error finalizing enhanced session:', error);
       }
@@ -601,8 +660,9 @@ fastify.register(async function (fastify) {
         streamStarted = true;
         sttService.startListening();
         
-        // Check if we can send greeting now (if org context already loaded)
-        await handleOrganizationContextLoaded();
+        // Try to send greeting immediately after stream starts
+        console.log('🔍 Stream started, attempting to send greeting...');
+        await tryToSendGreeting();
         
         // 📋 BACKGROUND: Load organization context asynchronously
         const loadOrgContextAsync = async () => {
@@ -625,6 +685,7 @@ fastify.register(async function (fastify) {
             }
             
             // Check if enhanced features are enabled for this organization
+            const { isEnhancedEnabled, getEnhancedConfig } = getEnhancedServices();
             const enhancedConfig = getEnhancedConfig(organizationContext);
             const featuresEnabled = isEnhancedEnabled(organizationContext);
             
@@ -637,7 +698,7 @@ fastify.register(async function (fastify) {
             if (featuresEnabled) {
               // Initialize enhanced voice pipeline session with organization context
               console.log('🚀 Initializing enhanced voice pipeline session');
-              enhancedSession = enhancedVoicePipeline.initializeSession(sessionId, organizationContext);
+              enhancedSession = getEnhancedVoicePipeline().initializeSession(sessionId, organizationContext);
               
               console.log('✅ Enhanced session initialized:', {
                 sessionId: enhancedSession.sessionId,
@@ -649,15 +710,16 @@ fastify.register(async function (fastify) {
             }
             
             // 🚀 IMMEDIATE: Send custom greeting now that context is loaded
-            await handleOrganizationContextLoaded();
+            await tryToSendGreeting();
             
           } catch (error) {
             console.error('⚠️ Failed to load organization context for', toNumber, ':', error.message);
             organizationContext = contextService.getDefaultContext();
             
             // Initialize with default context if enhanced features are enabled
+            const { isEnhancedEnabled } = getEnhancedServices();
             if (isEnhancedEnabled(organizationContext)) {
-              enhancedSession = enhancedVoicePipeline.initializeSession(sessionId, organizationContext);
+              enhancedSession = getEnhancedVoicePipeline().initializeSession(sessionId, organizationContext);
               console.log('✅ Enhanced session initialized with default context');
             }
           }
@@ -667,8 +729,9 @@ fastify.register(async function (fastify) {
             console.log('⚠️ No toNumber provided in stream parameters, using default context');
             organizationContext = contextService.getDefaultContext();
             
+            const { isEnhancedEnabled } = getEnhancedServices();
             if (isEnhancedEnabled(organizationContext)) {
-              enhancedSession = enhancedVoicePipeline.initializeSession(sessionId, organizationContext);
+              enhancedSession = getEnhancedVoicePipeline().initializeSession(sessionId, organizationContext);
               console.log('✅ Enhanced session initialized with default context');
             }
           }
@@ -676,6 +739,25 @@ fastify.register(async function (fastify) {
         
         // Execute organization context loading in background
         loadOrgContextAsync();
+        
+        // Fallback: ensure greeting is sent within 3 seconds even if race conditions occur
+        setTimeout(async () => {
+          if (!greetingSent && streamSid) {
+            console.log('⏰ Fallback timeout: sending greeting after 3 seconds');
+            greetingSent = true;
+            // Use fallback greeting if organization context didn't load in time
+            const greeting = organizationContext?.businessConfig?.greeting || 
+                            organizationContext?.businessConfig?.scripts?.greeting ||
+                            FALLBACK_GREETING;
+            
+            try {
+              await ttsService.generateAndStream(greeting, ws, { streamId: streamSid });
+              console.log('✅ Fallback greeting sent successfully');
+            } catch (error) {
+              console.error('❌ Error sending fallback greeting:', error);
+            }
+          }
+        }, 3000);
         
         // Initialize call tracking
         /* if (callSid && !callId) {
@@ -763,9 +845,12 @@ fastify.register(async function (fastify) {
     ttsService.interruptStream();
     
     // Finalize enhanced voice pipeline session if it exists
-    if (enhancedSession && isEnhancedEnabled(organizationContext)) {
+    if (enhancedSession) {
       try {
-        enhancedVoicePipeline.finalizeSession(sessionId);
+        const { isEnhancedEnabled } = getEnhancedServices();
+        if (isEnhancedEnabled(organizationContext)) {
+          getEnhancedVoicePipeline().finalizeSession(sessionId);
+        }
       } catch (error) {
         console.error('Error finalizing enhanced session on websocket error:', error);
       }
@@ -808,13 +893,14 @@ fastify.get('/health', async (request, reply) => {
     services: {}
   };
 
-  // Test database connection
+  // Test database connection using database manager
   try {
-    const { PrismaClient } = require('@prisma/client');
-    const prisma = new PrismaClient();
-    await prisma.$queryRaw`SELECT 1`;
-    await prisma.$disconnect();
-    health.services.database = 'connected';
+    const { healthCheck } = require('./config/database');
+    const dbHealth = await healthCheck();
+    health.services.database = dbHealth.status;
+    if (dbHealth.status === 'unhealthy') {
+      health.status = 'degraded';
+    }
   } catch (error) {
     health.services.database = 'error';
     health.status = 'degraded';
@@ -835,7 +921,8 @@ fastify.get('/health', async (request, reply) => {
 // Enhanced voice pipeline health check
 fastify.get('/health/enhanced-voice', async (request, reply) => {
   try {
-    const health = globalEnhancedVoicePipeline.healthCheck();
+    const pipeline = getGlobalEnhancedVoicePipeline();
+    const health = pipeline.healthCheck();
     return {
       status: 'healthy',
       enhancedVoice: health,
@@ -870,8 +957,8 @@ const start = async () => {
   try {
     // Pre-warm database connection before starting server
     console.log('🔥 Pre-warming database connection...');
-    const { getDatabase } = require('./config/database');
-    await getDatabase();
+    const { prewarmDatabase } = require('./config/database');
+    await prewarmDatabase();
     
     const port = process.env.PORT || 3000;
     const host = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';

@@ -29,7 +29,29 @@ fi
 cleanup() {
     echo ""
     echo "🛑 Shutting down development servers..."
-    kill 0  # Kill all processes in the current process group
+    
+    # Kill backend process specifically
+    if [ ! -z "$BACKEND_PID" ]; then
+        echo "🔌 Stopping backend server (PID: $BACKEND_PID)..."
+        kill -TERM $BACKEND_PID 2>/dev/null
+        sleep 2
+        kill -KILL $BACKEND_PID 2>/dev/null
+    fi
+    
+    # Kill frontend process specifically
+    if [ ! -z "$FRONTEND_PID" ]; then
+        echo "🔌 Stopping frontend server (PID: $FRONTEND_PID)..."
+        kill -TERM $FRONTEND_PID 2>/dev/null
+        sleep 1
+        kill -KILL $FRONTEND_PID 2>/dev/null
+    fi
+    
+    # Kill any remaining processes on our ports
+    echo "🔌 Cleaning up any remaining processes on ports 3001 and 5173..."
+    lsof -ti:3001 | xargs kill -KILL 2>/dev/null || true
+    lsof -ti:5173 | xargs kill -KILL 2>/dev/null || true
+    
+    echo "✅ Cleanup complete"
     exit 0
 }
 

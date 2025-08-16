@@ -1,7 +1,8 @@
 const jwt = require('jsonwebtoken');
-const { PrismaClient } = require('@prisma/client');
+const { getDatabase } = require('../config/database');
 
-const prisma = new PrismaClient();
+// Remove module-level Prisma client to avoid circular dependencies
+// const prisma = new PrismaClient();
 
 async function authMiddleware(request, reply) {
   const authHeader = request.headers.authorization;
@@ -16,6 +17,7 @@ async function authMiddleware(request, reply) {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
     // Verify user still exists
+    const prisma = await getDatabase();
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
       select: {

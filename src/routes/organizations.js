@@ -1,7 +1,8 @@
-const { PrismaClient } = require('@prisma/client');
+const { getDatabase } = require('../config/database');
 const { requireRole } = require('../middleware/auth');
 
-const prisma = new PrismaClient();
+// Remove module-level Prisma client to avoid circular dependencies
+// const prisma = new PrismaClient();
 
 async function organizationRoutes(fastify, options) {
   // Authentication is handled at the parent level in index.js
@@ -11,6 +12,7 @@ async function organizationRoutes(fastify, options) {
     const { organizationId } = request.user;
     
     try {
+      const prisma = await getDatabase();
       const organization = await prisma.organization.findUnique({
         where: { id: organizationId },
         include: {
@@ -43,6 +45,7 @@ async function organizationRoutes(fastify, options) {
     const { name, plan, smsBranding } = request.body;
     
     try {
+      const prisma = await getDatabase();
       const organization = await prisma.organization.update({
         where: { id: organizationId },
         data: {
@@ -63,6 +66,7 @@ async function organizationRoutes(fastify, options) {
     const { organizationId } = request.user;
     
     try {
+      const prisma = await getDatabase();
       const config = await prisma.businessConfig.findUnique({
         where: { organizationId }
       });
@@ -89,6 +93,7 @@ async function organizationRoutes(fastify, options) {
     } = request.body;
     
     try {
+      const prisma = await getDatabase();
       const config = await prisma.businessConfig.upsert({
         where: { organizationId },
         update: {
@@ -134,6 +139,7 @@ async function organizationRoutes(fastify, options) {
     const { organizationId } = request.user;
     
     try {
+      const prisma = await getDatabase();
       const integrations = await prisma.integration.findMany({
         where: { organizationId }
       });
@@ -150,6 +156,7 @@ async function organizationRoutes(fastify, options) {
     const { type, oauthTokens, scopes, externalId } = request.body;
     
     try {
+      const prisma = await getDatabase();
       const integration = await prisma.integration.upsert({
         where: {
           organizationId_type: {
@@ -185,6 +192,7 @@ async function organizationRoutes(fastify, options) {
     const { type } = request.params;
     
     try {
+      const prisma = await getDatabase();
       await prisma.integration.delete({
         where: {
           organizationId_type: {
@@ -205,6 +213,7 @@ async function organizationRoutes(fastify, options) {
     const { organizationId } = request.user;
     
     try {
+      const prisma = await getDatabase();
       const config = await prisma.businessConfig.findUnique({
         where: { organizationId },
         select: {
@@ -264,6 +273,7 @@ async function organizationRoutes(fastify, options) {
     } = request.body;
     
     try {
+      const prisma = await getDatabase();
       // Update business config with voice settings and scripts
       const config = await prisma.businessConfig.upsert({
         where: { organizationId },
@@ -332,6 +342,7 @@ async function organizationRoutes(fastify, options) {
     const { organizationId } = request.user;
     
     try {
+      const prisma = await getDatabase();
       const config = await prisma.businessConfig.findUnique({
         where: { organizationId },
         select: {
@@ -398,6 +409,7 @@ async function organizationRoutes(fastify, options) {
     } = request.body;
     
     try {
+      const prisma = await getDatabase();
       const config = await prisma.businessConfig.upsert({
         where: { organizationId },
         update: {
@@ -478,6 +490,7 @@ async function organizationRoutes(fastify, options) {
     const { organizationId } = request.user;
     
     try {
+      const prisma = await getDatabase();
       const organization = await prisma.organization.findUnique({
         where: { id: organizationId },
         include: {
@@ -540,6 +553,7 @@ async function organizationRoutes(fastify, options) {
       const { organizationId } = request.user;
       
       // Get active calendar integrations
+      const prisma = await getDatabase();
       const integrations = await prisma.integration.findMany({
         where: {
           organizationId,
@@ -614,6 +628,7 @@ async function organizationRoutes(fastify, options) {
       }
 
       // Get active calendar integrations
+      const prisma = await getDatabase();
       const integrations = await prisma.integration.findMany({
         where: {
           organizationId,

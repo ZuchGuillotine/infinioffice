@@ -1,4 +1,20 @@
-const { getDatabase } = require('../config/database');
+/**
+ * Organization Context Service
+ * 
+ * Provides organization context lookup by Twilio phone number.
+ * Uses lazy initialization to prevent circular dependencies during startup.
+ */
+
+// Lazy import to prevent circular dependencies
+let getDatabase = null;
+
+// Lazy initialization function
+function getDatabaseFunction() {
+  if (!getDatabase) {
+    getDatabase = require('../config/database').getDatabase;
+  }
+  return getDatabase;
+}
 
 class OrganizationContextService {
   constructor() {
@@ -31,7 +47,9 @@ class OrganizationContextService {
       const normalizedNumber = this.normalizePhoneNumber(phoneNumber);
       console.log('📱 Normalized phone number:', phoneNumber, '->', normalizedNumber);
       
-      const prisma = await getDatabase();
+      // Lazy load database function
+      const dbFunction = getDatabaseFunction();
+      const prisma = await dbFunction();
       
       // Single optimized query that tries multiple phone number formats
       const phoneVariants = [normalizedNumber];
@@ -360,7 +378,8 @@ ESCALATION: ${businessConfig?.escalationNumber ? `Transfer to ${businessConfig.e
   async invalidateOrganizationCache(organizationId) {
     try {
       // Find the organization to get its phone number
-      const prisma = await getDatabase();
+      const dbFunction = getDatabaseFunction();
+      const prisma = await dbFunction();
       const organization = await prisma.organization.findUnique({
         where: { id: organizationId },
         select: { twilioNumber: true }

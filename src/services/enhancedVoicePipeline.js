@@ -4,11 +4,26 @@
  * This service integrates the enhanced state machine and LLM service with
  * the existing voice pipeline, providing backwards compatibility while
  * enabling new features like location capture and tenant customization.
+ * 
+ * Uses lazy initialization to prevent circular dependencies during startup.
  */
 
 const { interpret } = require('xstate');
-const { enhancedBookingMachine } = require('./enhancedStateMachine');
-const { EnhancedLLMService } = require('./enhancedLLM');
+
+// Lazy imports to prevent circular dependencies
+let enhancedBookingMachine = null;
+let EnhancedLLMService = null;
+
+// Lazy initialization function
+function getEnhancedServices() {
+  if (!enhancedBookingMachine) {
+    enhancedBookingMachine = require('./enhancedStateMachine').enhancedBookingMachine;
+  }
+  if (!EnhancedLLMService) {
+    EnhancedLLMService = require('./enhancedLLM').EnhancedLLMService;
+  }
+  return { enhancedBookingMachine, EnhancedLLMService };
+}
 
 class EnhancedVoicePipeline {
   constructor(options = {}) {
@@ -19,9 +34,21 @@ class EnhancedVoicePipeline {
       ...options
     };
     
-    this.llmService = new EnhancedLLMService();
+    // Lazy initialization of LLM service
+    this.llmService = null;
     this.activeSessions = new Map(); // sessionId -> session data
     this.performanceMetrics = new Map(); // sessionId -> metrics
+  }
+
+  /**
+   * Get LLM service with lazy initialization
+   */
+  getLLMService() {
+    if (!this.llmService) {
+      const { EnhancedLLMService } = getEnhancedServices();
+      this.llmService = new EnhancedLLMService();
+    }
+    return this.llmService;
   }
 
   /**
@@ -33,6 +60,9 @@ class EnhancedVoicePipeline {
       organizationId: organizationContext?.organizationId,
       enhancedFeatures: this.options.enableEnhancedFeatures
     });
+
+    // Lazy load enhanced services
+    const { enhancedBookingMachine } = getEnhancedServices();
 
     // Create enhanced state machine instance with XState v5 syntax
     const stateMachine = interpret(enhancedBookingMachine, {
@@ -104,7 +134,7 @@ class EnhancedVoicePipeline {
 
       // Step 1: Process with Enhanced LLM Service
       const llmStartTime = Date.now();
-      const llmResult = await this.llmService.processMessage(
+      const llmResult = await this.getLLMService().processMessage(
         transcript,
         sessionId,
         currentContext
@@ -319,7 +349,7 @@ class EnhancedVoicePipeline {
     const metrics = this.generateFinalMetrics(sessionId);
 
     // Clear LLM session
-    this.llmService.clearSession(sessionId);
+    this.getLLMService().clearSession(sessionId);
 
     // Cleanup
     this.activeSessions.delete(sessionId);

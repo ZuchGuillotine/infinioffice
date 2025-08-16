@@ -3,7 +3,18 @@
  * Supports location capture, FAQ handling, and tenant customization
  */
 
-const { getOpenAIClient } = require('./llm');
+const OpenAI = require('openai');
+
+// Create OpenAI client lazily to avoid circular dependencies
+let openai = null;
+const getOpenAIClient = () => {
+  if (!openai) {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  }
+  return openai;
+};
 
 // Enhanced intent types with location support
 const INTENT_TYPES = {

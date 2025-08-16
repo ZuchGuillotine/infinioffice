@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Business Info Configuration**: Enhanced UI showing assigned phone number and organization settings
 
 ### Fixed
+- **Critical Startup Infinite Loop**: Resolved infinite loop during application startup caused by circular dependency between enhanced voice services and database initialization. Implemented lazy loading pattern for enhanced voice pipeline to break circular import chain.
+- **Custom Greeting Race Condition**: Fixed critical issue where organization-specific greetings were not being delivered to callers due to timing race condition between STT readiness, organization context loading, and stream initialization. Implemented multi-trigger greeting system with 3-second fallback guarantee.
 - **Critical Call Latency Issues**: Resolved extremely high latency on call startup by removing blocking default greeting logic and optimizing database connection flow
 - **Custom Greeting Delivery**: Fixed issue where system sent generic default greeting instead of organization's custom greeting
 - **Organization Context Loading**: Fixed critical issue where voice agent was loading "Default Organization" instead of user-specific organization context
@@ -38,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Voice Agent Persistence**: Improved context preservation across conversation turns to maintain organization-specific settings
 
 ### Technical
+- **Circular Dependency Resolution**: Refactored enhanced voice pipeline imports in `src/index.js` to use lazy loading pattern. Replaced immediate instantiation with `getEnhancedServices()`, `getEnhancedVoicePipeline()`, and `getGlobalEnhancedVoicePipeline()` functions to break circular import chain at module load time.
+- **Greeting System Redesign**: Replaced complex conditional greeting logic with simplified `tryToSendGreeting()` function. Added multiple trigger points (stream start, STT ready, context loaded) plus 3-second timeout fallback to guarantee greeting delivery.
 - **Enhanced Voice Pipeline Services**: Added `enhancedVoicePipeline.js`, `enhancedStateMachine.js`, `enhancedLlm.js`, `contextManager.js`, `intentDetection.js`, `promptSystem.js`, and `tools.js`
 - **Database Optimization**: Implemented connection pre-warming, optimized connection pooling, and selective field queries for faster organization lookups
 - **Call Flow Optimization**: Restructured greeting delivery to wait for organization context instead of sending default greeting immediately
