@@ -62,28 +62,69 @@ docker run -p 3000:3000 --env-file .env infinioffice
 
 ## AWS App Runner Deployment
 
-### 1. Prepare Environment Variables
+### 1. Set Up AWS Secrets Manager (Recommended for Production)
 
-Create these environment variables in App Runner:
+For production deployments, use AWS Secrets Manager to store sensitive credentials:
 
-**Required:**
+**Database Secret:**
+Your RDS database should already have an associated secret. Use its ARN:
+```
+arn:aws:secretsmanager:us-west-2:304783065551:secret:rds-db-credentials/cluster-xxxxx
+```
+
+**Additional Secrets (Optional):**
+Create additional secrets for other sensitive values:
+```bash
+# Create secrets for API keys
+aws secretsmanager create-secret --name "infinioffice/openai-api-key" --secret-string "your-openai-key"
+aws secretsmanager create-secret --name "infinioffice/deepgram-api-key" --secret-string "your-deepgram-key"
+aws secretsmanager create-secret --name "infinioffice/twilio-auth-token" --secret-string "your-twilio-token"
+aws secretsmanager create-secret --name "infinioffice/jwt-secret" --secret-string "your-jwt-secret"
+```
+
+### 2. Configure App Runner Environment Variables
+
+Set these environment variables in the AWS App Runner console:
+
+**Required - Always Set:**
 ```bash
 NODE_ENV=production
 PORT=3000
-DATABASE_URL=postgresql://user:pass@host:5432/dbname
-JWT_SECRET=your-secret-key-here
+AWS_REGION=us-west-2
 
-# API Keys
-DEEPGRAM_API_KEY=your-deepgram-key
-OPENAI_API_KEY=your-openai-key
-
-# Twilio Configuration  
+# Public/Non-sensitive values
 TWILIO_ACCOUNT_SID=your-twilio-sid
-TWILIO_AUTH_TOKEN=your-twilio-token
-TWILIO_PHONE_NUMBER=your-twilio-number
-
-# Google OAuth (optional)
 GOOGLE_CLIENT_ID=your-google-client-id
+```
+
+**Database Configuration (Choose One):**
+
+Option A - Secrets Manager (Recommended):
+```bash
+DB_SECRET_ID=arn:aws:secretsmanager:us-west-2:304783065551:secret:rds-db-credentials/cluster-xxxxx
+```
+
+Option B - Direct URL (Fallback):
+```bash
+DATABASE_URL=postgresql://user:pass@host:5432/dbname
+```
+
+**API Keys (Choose One for Each):**
+
+Option A - Secrets Manager:
+```bash
+OPENAI_SECRET_ID=arn:aws:secretsmanager:us-west-2:304783065551:secret:infinioffice/openai-api-key
+DEEPGRAM_SECRET_ID=arn:aws:secretsmanager:us-west-2:304783065551:secret:infinioffice/deepgram-api-key
+TWILIO_SECRET_ID=arn:aws:secretsmanager:us-west-2:304783065551:secret:infinioffice/twilio-auth-token
+JWT_SECRET_ID=arn:aws:secretsmanager:us-west-2:304783065551:secret:infinioffice/jwt-secret
+```
+
+Option B - Direct Values (Fallback):
+```bash
+OPENAI_API_KEY=your-openai-key
+DEEPGRAM_API_KEY=your-deepgram-key
+TWILIO_AUTH_TOKEN=your-twilio-token
+JWT_SECRET=your-jwt-secret
 ```
 
 **Optional:**
@@ -92,7 +133,33 @@ FRONTEND_URL=https://your-domain.com
 DEFAULT_ORG_ID=uuid-for-default-org
 ```
 
-### 2. Deploy to App Runner
+### 3. Configure App Runner IAM Permissions
+
+If using Secrets Manager, your App Runner service needs permission to access the secrets:
+
+**Create an IAM role for App Runner with this policy:**
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret"
+            ],
+            "Resource": [
+                "arn:aws:secretsmanager:us-west-2:304783065551:secret:rds-db-credentials/*",
+                "arn:aws:secretsmanager:us-west-2:304783065551:secret:infinioffice/*"
+            ]
+        }
+    ]
+}
+```
+
+**Attach this role to your App Runner service in the Instance Role section.**
+
+### 4. Deploy to App Runner
 
 #### Option A: Direct from GitHub
 

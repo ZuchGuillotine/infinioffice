@@ -45,6 +45,20 @@ const { createCall, createTurn, updateTurn, updateCall } = require('./services/d
 const { performanceMonitor } = require('./services/performance');
 const { OrganizationContextService } = require('./services/organizationContext');
 
+// Import enhanced voice agent services
+const { EnhancedVoicePipeline } = require('./services/enhancedVoicePipeline');
+const { isEnhancedEnabled, getEnhancedConfig } = require('./config/enhancedVoice');
+
+// Create global enhanced voice pipeline instance for health checks
+const globalEnhancedVoicePipeline = new EnhancedVoicePipeline({
+  enableEnhancedFeatures: true,
+  fallbackToLegacy: true,
+  telemetryEnabled: true
+});
+
+// Default greeting for fallback scenarios only
+const FALLBACK_GREETING = "Hello! Thank you for calling. I'm here to help you schedule an appointment. How can I assist you today?";
+
 // Import route modules
 const authRoutes = require('./routes/auth');
 const organizationRoutes = require('./routes/organizations');
@@ -124,9 +138,18 @@ fastify.register(async function (fastify) {
     console.log('⏳ Organization context will be loaded when Twilio start event is received...');
 
     // Initialize services
-    const bookingService = interpret(bookingMachine);
     const sttService = new STTService();
     const ttsService = new TTSService();
+    
+    // Initialize enhanced voice pipeline (with fallback to legacy)
+    const enhancedVoicePipeline = new EnhancedVoicePipeline({
+      enableEnhancedFeatures: true,
+      fallbackToLegacy: true,
+      telemetryEnabled: true
+    });
+    
+    // Enhanced voice pipeline session will be initialized when organization context is loaded
+    let enhancedSession = null;
     
     // Connection state
     let callId = null;
@@ -138,48 +161,31 @@ fastify.register(async function (fastify) {
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     console.log('Session initialized:', sessionId);
+    
+    // Enhanced voice pipeline session will be initialized when organization context is loaded
 
-    // Start the booking service
-    bookingService.start();
-
-    // Log state transitions for debugging using XState v5 subscribe method
-    bookingService.subscribe((state) => {
-      console.log('State transition:', {
-        value: state.value,
-        context: {
-          service: state.context.service,
-          preferredTime: state.context.preferredTime,
-          contact: state.context.contact
-        }
-      });
-
-      // Log state transitions to database if call is active
-      if (callId) {
-        updateCall(callId, {
-          currentState: state.value,
-          context: state.context,
-          lastTransition: new Date()
-        }).catch(error => {
-          console.error('Failed to log state transition to database:', error);
-        });
-      }
-    });
+    // Enhanced voice pipeline will handle state transitions internally
+    console.log('Enhanced voice pipeline ready - state transitions will be logged internally');
 
     // STT will be started when Twilio stream begins
     let sttReady = false;
     let streamStarted = false;
     let greetingSent = false;
+    let organizationContextLoaded = false;
+    let loadingOrgContext = false;
 
     // Handle STT events
     sttService.on('ready', () => {
       console.log('STT service ready');
       sttReady = true;
-      // Only send greeting if STT is ready, stream has started, organization context is loaded, and greeting hasn't been sent yet
-      if (streamStarted && sttReady && organizationContext && !greetingSent) {
-        console.log('STT ready, stream started, and organization context loaded - sending initial greeting');
-        greetingSent = true;
-        setTimeout(sendInitialGreeting, 500); // Small delay to ensure connection stability
+      
+      // Flush any queued audio data now that STT is ready
+      if (sttService.flushAudioQueue) {
+        sttService.flushAudioQueue();
       }
+      
+      // Wait for organization context before sending greeting
+      console.log('🚀 STT ready - waiting for organization context to send custom greeting');
     });
 
     sttService.on('transcript', async (data) => {
@@ -197,12 +203,23 @@ fastify.register(async function (fastify) {
     sttService.on('bargeIn', () => {
       console.log('Barge-in detected - interrupting TTS');
       ttsService.interruptStream();
+      
+      // Notify enhanced voice pipeline of barge-in if available
+      if (enhancedSession && isEnhancedEnabled(organizationContext)) {
+        enhancedVoicePipeline.handleBargeIn(sessionId);
+      }
+      
       resetConversationTimeout();
     });
 
     sttService.on('speechStarted', () => {
       console.log('Speech started');
       clearSilenceTimeout();
+      
+      // Notify enhanced voice pipeline if available
+      if (enhancedSession && isEnhancedEnabled(organizationContext)) {
+        enhancedVoicePipeline.handleSpeechEvent(sessionId, 'speechStarted');
+      }
     });
 
     sttService.on('speechEnded', () => {
@@ -211,6 +228,11 @@ fastify.register(async function (fastify) {
       if (!isProcessingTurn) {
         resetSilenceTimeout();
       }
+      
+      // Notify enhanced voice pipeline if available
+      if (enhancedSession && isEnhancedEnabled(organizationContext)) {
+        enhancedVoicePipeline.handleSpeechEvent(sessionId, 'speechEnded');
+      }
     });
 
     sttService.on('silence', () => {
@@ -218,6 +240,11 @@ fastify.register(async function (fastify) {
       // Handle prolonged silence
       if (!isProcessingTurn) {
         handleSilence();
+      }
+      
+      // Notify enhanced voice pipeline if available
+      if (enhancedSession && isEnhancedEnabled(organizationContext)) {
+        enhancedVoicePipeline.handleSpeechEvent(sessionId, 'silence');
       }
     });
 
@@ -232,39 +259,63 @@ fastify.register(async function (fastify) {
       }, 1000);
     });
 
-    // Send initial greeting using organization-specific greeting
-    const sendInitialGreeting = async () => {
+  // 🚀 Send custom greeting after organization context loads
+  const sendCustomGreeting = async () => {
     try {
-      // Use organization's custom greeting or fallback to script default
-      const initialGreeting = organizationContext.businessConfig?.greeting || 
-                              organizationContext.businessConfig?.scripts?.greeting ||
-                              "Hello! I'm here to help you schedule an appointment. How can I assist you today?";
+      if (!toNumber || !organizationContext) {
+        console.log('⚠️ Missing toNumber or organization context, cannot send custom greeting');
+        return;
+      }
+      
+      // Get custom greeting from organization context
+      const greeting = organizationContext.businessConfig?.greeting || 
+                      organizationContext.businessConfig?.scripts?.greeting ||
+                      FALLBACK_GREETING;
+      
+      const voiceModel = organizationContext.businessConfig?.voiceSettings?.voiceModel || 'aura-asteria-en';
+      
+      console.log('📢 Sending CUSTOM greeting for:', organizationContext.organizationName);
       
       ttsService.resetBargeInDetection && ttsService.resetBargeInDetection();
       
-      // Use organization's voice settings if available
-      const voiceOptions = {
+      const result = await ttsService.generateAndStream(greeting, ws, { 
         streamId: streamSid,
-        model: organizationContext.businessConfig?.voiceSettings?.voiceModel || 'aura-asteria-en',
-        speed: organizationContext.businessConfig?.voiceSettings?.speed || 1.0
-      };
+        model: voiceModel,
+        speed: 1.0
+      });
       
-      const result = await ttsService.generateAndStream(initialGreeting, ws, voiceOptions);
-      
-      console.log('Initial greeting sent:', {
+      console.log('✅ Custom greeting sent:', {
         organization: organizationContext.organizationName,
-        text: initialGreeting,
-        voiceModel: voiceOptions.model,
+        phone: toNumber,
+        text: greeting.substring(0, 50) + '...',
+        voiceModel,
         metrics: result.metrics
       });
       
       resetConversationTimeout();
+      
     } catch (error) {
-      console.error('Failed to send initial greeting:', error);
+      console.error('❌ Error sending custom greeting:', error);
+      // Fallback to basic greeting
+      try {
+        await ttsService.generateAndStream(FALLBACK_GREETING, ws, { streamId: streamSid });
+      } catch (fallbackError) {
+        console.error('❌ Error sending fallback greeting:', fallbackError);
+      }
     }
   };
 
-  // Process a complete turn (STT -> LLM -> TTS)
+  // Send greeting immediately when organization context is available
+  const handleOrganizationContextLoaded = async () => {
+    if (!organizationContextLoaded && organizationContext && sttReady && streamStarted && !greetingSent) {
+      organizationContextLoaded = true;
+      greetingSent = true;
+      console.log('🚀 Organization context loaded - sending custom greeting immediately');
+      await sendCustomGreeting();
+    }
+  };
+
+  // Process a complete turn using enhanced voice pipeline
   const processTurn = async (transcript, confidence) => {
     console.log(`processTurn called with transcript: "${transcript}", isProcessingTurn: ${isProcessingTurn}`);
     
@@ -275,106 +326,53 @@ fastify.register(async function (fastify) {
 
     isProcessingTurn = true;
     const turnStartTime = Date.now();
-    let currentTurnId = null;
 
     try {
-      console.log(`Starting turn ${turnIndex}: "${transcript}"`);
+      console.log(`Starting enhanced turn ${turnIndex}: "${transcript}"`);
 
-      // Step 1: Process message with LLM and get turn ID
-      const llmStartTime = Date.now();
-      /* const llmResult = await processMessage(
-        transcript,
-        sessionId,
-        { state: bookingService.state.value },
-        callId,
-        turnIndex
-      ); */
-      const currentSnapshot = bookingService.getSnapshot();
-      const contextWithState = { 
-        state: currentSnapshot.value || 'idle',
-        ...currentSnapshot.context, // Include current booking context
-        organizationContext: organizationContext, // Include organization-specific context
-        organizationId: organizationContext.organizationId,
-        businessConfig: organizationContext.businessConfig,
-        // Ensure all context fields are preserved
-        serviceValidated: currentSnapshot.context?.serviceValidated || false,
-        calendarError: currentSnapshot.context?.calendarError || false,
-        integrationFailure: currentSnapshot.context?.integrationFailure || false,
-        retryCount: currentSnapshot.context?.retryCount || 0,
-        fallbackReason: currentSnapshot.context?.fallbackReason || null,
-        sessionId: sessionId,
-        turnIndex: turnIndex,
-      };
+      let responseText;
       
-      console.log('📋 Current context being sent to LLM:', {
-        state: contextWithState.state,
-        service: contextWithState.service,
-        serviceValidated: contextWithState.serviceValidated,
-        preferredTime: contextWithState.preferredTime,
-        contact: contextWithState.contact,
-        retryCount: contextWithState.retryCount,
-        calendarError: contextWithState.calendarError,
-        fallbackReason: contextWithState.fallbackReason
-      });
-      
-      const llmResult = await processMessage(
-        transcript,
-        sessionId,
-        contextWithState
-      );
-      const llmMs = Date.now() - llmStartTime;
-      
-      console.log('🧠 LLM Result:', {
-        intent: llmResult.intent,
-        confidence: llmResult.confidence,
-        response: llmResult.response?.substring(0, 100) + '...',
-        bookingData: llmResult.bookingData,
-        processingTime: llmResult.processingTime
-      });
-      // currentTurnId = llmResult.turnId;
+      if (enhancedSession && isEnhancedEnabled(organizationContext)) {
+        // Use enhanced voice pipeline for turn processing
+        const enhancedResult = await enhancedVoicePipeline.processTurn(
+          sessionId,
+          transcript,
+          confidence,
+          callId,
+          turnIndex
+        );
 
-      // Initialize performance monitoring
-      if (currentTurnId) {
-        performanceMonitor.startTurn(currentTurnId, callId);
-        performanceMonitor.recordPhase(currentTurnId, 'llm', llmStartTime, Date.now());
+        console.log('✅ Enhanced turn processing complete:', {
+          intent: enhancedResult.intent,
+          confidence: enhancedResult.confidence,
+          state: enhancedResult.state,
+          hasResponse: !!enhancedResult.response,
+          processingTime: enhancedResult.processingTime
+        });
+
+        // Use enhanced response
+        responseText = enhancedResult.response;
+      } else {
+        // Fallback to legacy LLM processing
+        console.log('🔄 Using legacy LLM processing');
+        const llmResult = await processMessage(
+          transcript,
+          sessionId,
+          { 
+            state: 'idle',
+            organizationContext: organizationContext,
+            organizationId: organizationContext.organizationId,
+            businessConfig: organizationContext.businessConfig
+          }
+        );
+        
+        responseText = llmResult.response;
+        console.log('✅ Legacy turn processing complete:', {
+          intent: llmResult.intent,
+          confidence: llmResult.confidence,
+          response: responseText?.substring(0, 100) + '...'
+        });
       }
-
-      // Step 2: Update State Machine
-      console.log('🔄 Sending to State Machine:', {
-        type: 'PROCESS_INTENT',
-        intent: llmResult.intent,
-        confidence: llmResult.confidence,
-        hasBookingData: !!llmResult.bookingData,
-        entities: llmResult.entities
-      });
-      
-      // Ensure state machine context is enriched with business configuration
-      const enrichedBookingData = {
-        ...llmResult.bookingData,
-        businessConfig: organizationContext.businessConfig,
-        sessionId: sessionId,
-        turnIndex: turnIndex,
-      };
-
-      bookingService.send({
-        type: 'PROCESS_INTENT',
-        intent: llmResult.intent,
-        confidence: llmResult.confidence,
-        response: llmResult.response,
-        bookingData: enrichedBookingData,
-        entities: llmResult.entities,
-        originalSpeech: transcript,
-        businessConfig: organizationContext.businessConfig,
-      });
-      
-      const currentState = bookingService.getSnapshot();
-      console.log('⚙️ State Machine updated:', {
-        state: currentState.value,
-        context: currentState.context
-      });
-
-      // Use LLM response (which is context-aware), not the old stored response
-      const responseText = llmResult.response;
 
       // Step 3: Generate and stream TTS
       console.log('🔊 Starting TTS generation:', {
@@ -392,40 +390,30 @@ fastify.register(async function (fastify) {
         audioSize: ttsResult.metrics?.audioSize || 'unknown'
       });
 
-      // Record TTS performance
-      if (currentTurnId) {
-        performanceMonitor.recordPhase(currentTurnId, 'tts', ttsStartTime, Date.now());
-      }
-
       // Step 4: Log performance metrics
       const totalMs = Date.now() - turnStartTime;
-      const targetMet = performanceMonitor.isTargetMet(totalMs);
-
-      console.log(`Turn ${turnIndex} completed:`, {
+      
+      console.log(`Enhanced turn ${turnIndex} completed:`, {
         transcript,
         response: responseText,
-        intent: llmResult.intent,
-        confidence: llmResult.confidence,
-        state: currentState.value || 'unknown',
+        intent: enhancedResult.intent,
+        confidence: enhancedResult.confidence,
+        state: enhancedResult.state,
         processingTime: {
-          llm: llmMs,
+          enhanced: enhancedResult.processingTime,
           tts: ttsMs,
           total: totalMs
-        },
-        targetMet,
-        turnId: currentTurnId
+        }
       });
-
-      // Complete performance monitoring
-      if (currentTurnId) {
-        await performanceMonitor.completeTurn(currentTurnId);
-      }
 
       turnIndex++;
 
-      // Check for final state
-      if (currentState.matches && (currentState.matches('success') || currentState.matches('fallback'))) {
-        await handleConversationEnd(currentState);
+      // Check for final state using enhanced pipeline if available
+      if (enhancedSession && isEnhancedEnabled(organizationContext)) {
+        const enhancedState = enhancedVoicePipeline.getSessionState(sessionId);
+        if (enhancedState && (enhancedState.state === 'bookingSuccess' || enhancedState.state === 'conversationComplete' || enhancedState.state === 'escalateToHuman')) {
+          await handleConversationEnd(enhancedState);
+        }
       }
 
     } catch (error) {
@@ -478,7 +466,18 @@ fastify.register(async function (fastify) {
 
   // Handle conversation end
   const handleConversationEnd = async (finalState) => {
-    const status = finalState.matches('success') ? 'completed' : 'failed';
+    let status = 'completed';
+    
+    // Map enhanced states to call statuses
+    if (finalState.state === 'escalateToHuman') {
+      status = 'escalated';
+    } else if (finalState.state === 'conversationComplete') {
+      status = 'completed';
+    } else if (finalState.state === 'bookingSuccess') {
+      status = 'completed';
+    } else {
+      status = 'failed';
+    }
     
     if (callId) {
       try {
@@ -493,10 +492,20 @@ fastify.register(async function (fastify) {
       }
     }
 
-    console.log('Conversation completed:', {
-      finalState: finalState.value,
+    console.log('Enhanced conversation completed:', {
+      finalState: finalState.state,
       finalContext: finalState.context
     });
+
+    // Finalize enhanced voice pipeline session if it exists
+    if (enhancedSession && isEnhancedEnabled(organizationContext)) {
+      try {
+        const finalMetrics = enhancedVoicePipeline.finalizeSession(sessionId);
+        console.log('Enhanced session finalized with metrics:', finalMetrics);
+      } catch (error) {
+        console.error('Error finalizing enhanced session:', error);
+      }
+    }
 
     // Set a longer timeout for call completion
     setTimeout(() => {
@@ -587,10 +596,22 @@ fastify.register(async function (fastify) {
           callStore.delete(callSid);
         }
         
-        // Now that we have the phone number, load the organization context
-        if (toNumber) {
-          try {
-            organizationContext = await contextService.getOrganizationContext(toNumber);
+        // 🚀 IMMEDIATE: Start STT service without waiting for DB
+        console.log('🚀 Starting STT service immediately (no DB wait)');
+        streamStarted = true;
+        sttService.startListening();
+        
+        // Check if we can send greeting now (if org context already loaded)
+        await handleOrganizationContextLoaded();
+        
+        // 📋 BACKGROUND: Load organization context asynchronously
+        const loadOrgContextAsync = async () => {
+          if (toNumber && !loadingOrgContext) {
+            loadingOrgContext = true;
+            console.log('📋 Loading organization context in background...');
+            
+            try {
+              organizationContext = await contextService.getOrganizationContext(toNumber);
             console.log('🏢 Loaded organization context for:', organizationContext.organizationName, '- Phone:', toNumber);
             console.log('🏢 Organization services available:', organizationContext.businessConfig?.services?.length || 0);
             
@@ -602,14 +623,59 @@ fastify.register(async function (fastify) {
                 scripts: Object.keys(organizationContext.businessConfig.scripts || {}).join(', ') || 'None'
               });
             }
+            
+            // Check if enhanced features are enabled for this organization
+            const enhancedConfig = getEnhancedConfig(organizationContext);
+            const featuresEnabled = isEnhancedEnabled(organizationContext);
+            
+            console.log('🔧 Enhanced voice configuration:', {
+              enabled: featuresEnabled,
+              features: enhancedConfig.features,
+              confirmationThresholds: enhancedConfig.confirmationThresholds
+            });
+            
+            if (featuresEnabled) {
+              // Initialize enhanced voice pipeline session with organization context
+              console.log('🚀 Initializing enhanced voice pipeline session');
+              enhancedSession = enhancedVoicePipeline.initializeSession(sessionId, organizationContext);
+              
+              console.log('✅ Enhanced session initialized:', {
+                sessionId: enhancedSession.sessionId,
+                isEnhanced: enhancedSession.isEnhanced,
+                hasStateMachine: !!enhancedSession.stateMachine
+              });
+            } else {
+              console.log('⚠️ Enhanced features disabled for this organization, using legacy pipeline');
+            }
+            
+            // 🚀 IMMEDIATE: Send custom greeting now that context is loaded
+            await handleOrganizationContextLoaded();
+            
           } catch (error) {
             console.error('⚠️ Failed to load organization context for', toNumber, ':', error.message);
             organizationContext = contextService.getDefaultContext();
+            
+            // Initialize with default context if enhanced features are enabled
+            if (isEnhancedEnabled(organizationContext)) {
+              enhancedSession = enhancedVoicePipeline.initializeSession(sessionId, organizationContext);
+              console.log('✅ Enhanced session initialized with default context');
+            }
           }
-        } else {
-          console.log('⚠️ No toNumber provided in stream parameters, using default context');
-          organizationContext = contextService.getDefaultContext();
-        }
+          
+          } else {
+            // No toNumber provided
+            console.log('⚠️ No toNumber provided in stream parameters, using default context');
+            organizationContext = contextService.getDefaultContext();
+            
+            if (isEnhancedEnabled(organizationContext)) {
+              enhancedSession = enhancedVoicePipeline.initializeSession(sessionId, organizationContext);
+              console.log('✅ Enhanced session initialized with default context');
+            }
+          }
+        };
+        
+        // Execute organization context loading in background
+        loadOrgContextAsync();
         
         // Initialize call tracking
         /* if (callSid && !callId) {
@@ -630,17 +696,7 @@ fastify.register(async function (fastify) {
           }
         } */
 
-        // Start STT listening now that we have the Twilio stream
-        console.log('Starting STT service for Twilio stream');
-        streamStarted = true;
-        sttService.startListening();
-
-        // Send greeting now that we have organization context and stream is started
-        if (sttReady && streamStarted && organizationContext && !greetingSent) {
-          console.log('Stream started, STT ready, and organization context loaded - sending initial greeting');
-          greetingSent = true;
-          setTimeout(sendInitialGreeting, 500); // Small delay to ensure connection stability
-        }
+        // STT and greeting are now handled immediately above (no DB wait)
         
       } else if (data.event === 'media') {
         // Stream audio data to STT service
@@ -679,7 +735,6 @@ fastify.register(async function (fastify) {
     // Clean up services
     sttService.stopListening();
     ttsService.interruptStream();
-    bookingService.stop();
     
     // Clear timeouts
     if (conversationTimeout) clearTimeout(conversationTimeout);
@@ -706,7 +761,15 @@ fastify.register(async function (fastify) {
     // Clean up services
     sttService.stopListening();
     ttsService.interruptStream();
-    bookingService.stop();
+    
+    // Finalize enhanced voice pipeline session if it exists
+    if (enhancedSession && isEnhancedEnabled(organizationContext)) {
+      try {
+        enhancedVoicePipeline.finalizeSession(sessionId);
+      } catch (error) {
+        console.error('Error finalizing enhanced session on websocket error:', error);
+      }
+    }
     
     // Clear timeouts
     if (conversationTimeout) clearTimeout(conversationTimeout);
@@ -769,6 +832,24 @@ fastify.get('/health', async (request, reply) => {
   return health;
 });
 
+// Enhanced voice pipeline health check
+fastify.get('/health/enhanced-voice', async (request, reply) => {
+  try {
+    const health = globalEnhancedVoicePipeline.healthCheck();
+    return {
+      status: 'healthy',
+      enhancedVoice: health,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    return {
+      status: 'error',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    };
+  }
+});
+
 // Serve React app for all non-API routes in production
 if (process.env.NODE_ENV === 'production') {
   fastify.get('/*', async (request, reply) => {
@@ -787,6 +868,11 @@ if (process.env.NODE_ENV === 'production') {
 
 const start = async () => {
   try {
+    // Pre-warm database connection before starting server
+    console.log('🔥 Pre-warming database connection...');
+    const { getDatabase } = require('./config/database');
+    await getDatabase();
+    
     const port = process.env.PORT || 3000;
     const host = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
     

@@ -19,12 +19,8 @@ run:
       value: production
     - name: PORT  
       value: 3000
-  # Environment variables will be set through AWS App Runner configuration
-  # - DEEPGRAM_API_KEY
-  # - OPENAI_API_KEY  
-  # - TWILIO_ACCOUNT_SID
-  # - TWILIO_AUTH_TOKEN
-  # - TWILIO_PHONE_NUMBER
-  # - DATABASE_URL
-  # - JWT_SECRET
-  # - GOOGLE_CLIENT_ID (for OAuth)
+    - name: AWS_REGION
+      value: us-west-2
+  # All secrets and sensitive environment variables will be configured
+  # through the AWS App Runner console, not in this file.
+  # See DEPLOYMENT_AWS.md for complete setup instructions.

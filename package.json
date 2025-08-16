@@ -28,6 +28,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.864.0",
     "@deepgram/sdk": "^4.11.2",
     "@fastify/cors": "^11.1.0",
     "@fastify/static": "^7.0.1",

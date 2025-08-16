@@ -1,6 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-
-const prisma = new PrismaClient();
+const { getDatabase } = require('../config/database');
 
 class OrganizationContextService {
   constructor() {
@@ -33,41 +31,80 @@ class OrganizationContextService {
       const normalizedNumber = this.normalizePhoneNumber(phoneNumber);
       console.log('📱 Normalized phone number:', phoneNumber, '->', normalizedNumber);
       
-      let organization = await prisma.organization.findUnique({
-        where: { twilioNumber: normalizedNumber },
+      const prisma = await getDatabase();
+      
+      // Single optimized query that tries multiple phone number formats
+      const phoneVariants = [normalizedNumber];
+      if (phoneNumber !== normalizedNumber) {
+        phoneVariants.push(phoneNumber);
+      }
+      
+      // Try direct lookup with all variants in one query
+      let organization = await prisma.organization.findFirst({
+        where: { 
+          twilioNumber: { in: phoneVariants }
+        },
         include: {
-          businessConfig: true,
+          businessConfig: {
+            select: {
+              businessHours: true,
+              holidays: true,
+              services: true,
+              providers: true,
+              escalationNumber: true,
+              smsCopy: true,
+              greeting: true,
+              timezone: true,
+              scripts: true,
+              rules: true,
+              voiceSettings: true
+            }
+          },
           integrations: {
-            where: { status: 'active' }
+            where: { status: 'active' },
+            select: {
+              type: true,
+              status: true,
+              externalId: true
+            }
           }
         }
       });
 
-      // If still not found, try alternative formats
-      if (!organization && phoneNumber !== normalizedNumber) {
-        console.log('🔄 Trying original format lookup for:', phoneNumber);
-        organization = await prisma.organization.findUnique({
-          where: { twilioNumber: phoneNumber },
-          include: {
-            businessConfig: true,
-            integrations: {
-              where: { status: 'active' }
-            }
-          }
-        });
-      }
-
-      // If still not found, try finding organizations and match any format
+      // Only if still not found, perform expensive fallback search
       if (!organization) {
-        console.log('🔄 Performing fallback lookup for any matching phone number format');
+        console.log('🔄 Performing fallback lookup for normalized phone formats');
         const allOrganizations = await prisma.organization.findMany({
           where: { 
             twilioNumber: { not: null }
           },
-          include: {
-            businessConfig: true,
+          select: {
+            id: true,
+            name: true,
+            plan: true,
+            twilioNumber: true,
+            businessConfig: {
+              select: {
+                businessHours: true,
+                holidays: true,
+                services: true,
+                providers: true,
+                escalationNumber: true,
+                smsCopy: true,
+                greeting: true,
+                timezone: true,
+                scripts: true,
+                rules: true,
+                voiceSettings: true
+              }
+            },
             integrations: {
-              where: { status: 'active' }
+              where: { status: 'active' },
+              select: {
+                type: true,
+                status: true,
+                externalId: true
+              }
             }
           }
         });
@@ -323,6 +360,7 @@ ESCALATION: ${businessConfig?.escalationNumber ? `Transfer to ${businessConfig.e
   async invalidateOrganizationCache(organizationId) {
     try {
       // Find the organization to get its phone number
+      const prisma = await getDatabase();
       const organization = await prisma.organization.findUnique({
         where: { id: organizationId },
         select: { twilioNumber: true }

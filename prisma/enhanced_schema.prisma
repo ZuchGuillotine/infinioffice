@@ -1,0 +1,298 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String
+  plan           String          @default("starter")
+  smsBranding    String?
+  twilioNumber   String?         @unique @db.VarChar(20)
+  createdAt      DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @db.Timestamptz(6)
+  
+  // Existing relationships
+  appointments   Appointment[]
+  businessConfig BusinessConfig?
+  calls          Call[]
+  integrations   Integration[]
+  users          User[]
+  
+  // New relationships for enhanced features
+  locations      Location[]
+  agentConfigs   AgentConfig[]
+  businessFacts  BusinessFact[]
+  conversationEvents ConversationEvent[]
+
+  @@index([twilioNumber])
+}
+
+model User {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @db.Uuid
+  email          String       @unique
+  role           String       @default("operator")
+  googleId       String?      @unique
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model BusinessConfig {
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String       @unique @db.Uuid
+  businessHours    Json?
+  holidays         Json?
+  services         Json?
+  providers        Json?
+  escalationNumber String?
+  smsCopy          String?
+  greeting         String?
+  timezone         String       @default("America/New_York")
+  scripts          Json?
+  rules            Json?
+  voiceSettings    Json?
+  
+  // Enhanced fields for location support
+  locationMode     String?      @default("at_business") // 'on_site' | 'at_business' | 'both'
+  
+  createdAt        DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @db.Timestamptz(6)
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// New: Location management for multi-branch businesses
+model Location {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String       @db.VarChar(255)
+  address        Json?        // {street, city, state, zip, country, formatted}
+  businessHours  Json?        // Location-specific hours override
+  services       Json?        // Location-specific services
+  providers      Json?        // Location-specific providers
+  isActive       Boolean      @default(true)
+  sortOrder      Int?         @default(0)
+  metadata       Json?        // Additional location data (parking, notes, etc.)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
+  
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  appointments   Appointment[]
+  
+  @@index([organizationId, isActive])
+  @@index([organizationId, sortOrder])
+}
+
+// New: Agent configuration with versioning
+model AgentConfig {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @db.Uuid
+  version        String       @db.VarChar(50) @default("1.0.0")
+  isActive       Boolean      @default(false)
+  name           String?      @db.VarChar(255)
+  description    String?
+  
+  // Configuration JSON fields
+  persona        Json?        // {formality: "professional", verbosity: "concise"}
+  prompts        Json?        // Custom prompts and scripts
+  policies       Json?        // Confirmation thresholds, escalation rules, etc.
+  flows          Json?        // Custom conversation flows and logic
+  fallbacks      Json?        // Error handling and escalation paths
+  
+  // Performance and behavior settings
+  confirmationThresholds Json? // Per-slot confirmation attempt limits
+  timeoutSettings        Json? // Silence and conversation timeout configs
+  escalationRules        Json? // When and how to escalate to humans
+  
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
+  createdBy      String?      @db.Uuid // User who created this config
+  
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  @@unique([organizationId, version])
+  @@index([organizationId, isActive])
+  @@index([organizationId, createdAt])
+}
+
+// New: Business facts and FAQ storage
+model BusinessFact {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @db.Uuid
+  category       String       @db.VarChar(100) // 'hours', 'location', 'services', 'pricing', 'policies', 'faq'
+  key            String       @db.VarChar(255) // Specific fact key within category
+  value          String       // The fact value or answer
+  tags           String[]     // Array of tags for search
+  priority       Int          @default(0) // Higher priority facts shown first
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
+  
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  @@unique([organizationId, category, key])
+  @@index([organizationId, category, isActive])
+  @@index([organizationId, tags])
+}
+
+model Integration {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @db.Uuid
+  type           String
+  oauthTokens    Json?
+  scopes         Json?
+  status         String       @default("pending")
+  externalId     String?
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, type])
+}
+
+// Enhanced Call model with better performance tracking
+model Call {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String?       @db.Uuid
+  twilioCallSid   String?       @db.VarChar(100)
+  callerPhone     String?       @db.VarChar(20)
+  status          String?       @db.VarChar(50)
+  currentState    String?       @db.VarChar(100)
+  context         Json?
+  finalContext    Json?
+  durationSeconds Int?
+  totalTurns      Int?
+  transcript      String?
+  recordingUrl    String?
+  metadata        Json?
+  error           String?
+  
+  // Enhanced performance fields
+  avgTurnLatency  Int?          // Average turn processing time in ms
+  maxTurnLatency  Int?          // Maximum turn processing time in ms
+  bargeInCount    Int?          @default(0) // Number of barge-ins detected
+  escalationReason String?      // Why call was escalated if applicable
+  conversationScore Float?      // AI-generated conversation quality score
+  
+  startedAt       DateTime?     @db.Timestamptz(6)
+  endedAt         DateTime?     @db.Timestamptz(6)
+  lastTransition  DateTime?     @db.Timestamptz(6)
+  createdAt       DateTime      @default(now()) @db.Timestamptz(6)
+  
+  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  turns           Turn[]
+  conversationEvents ConversationEvent[]
+  
+  @@index([organizationId, createdAt])
+  @@index([twilioCallSid])
+  @@index([status, organizationId])
+}
+
+// Enhanced Turn model with detailed performance metrics
+model Turn {
+  id            BigInt   @id @default(autoincrement())
+  callId        String   @db.Uuid
+  turnIndex     Int
+  
+  // Existing timing fields
+  asrMs         Int?
+  llmMs         Int?
+  ttsMs         Int?
+  
+  // Enhanced performance fields
+  totalLatencyMs     Int?     // Total turn processing time
+  asrConfidence      Float?   // STT confidence score
+  llmTokensIn        Int?     // Input tokens to LLM
+  llmTokensOut       Int?     // Output tokens from LLM
+  intentConfidence   Float?   // Intent detection confidence
+  bargeInDetected    Boolean? @default(false)
+  
+  // Content fields
+  transcriptIn  String?
+  transcriptOut String?
+  intent        String?      @db.VarChar(100)
+  entities      Json?        // Extracted entities
+  toolCalls     Json?        // LLM tool calls made
+  
+  // Confirmation tracking
+  confirmationAttempt Int?    @default(0)
+  slotType           String? @db.VarChar(50)
+  
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  call          Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+  
+  @@index([callId, turnIndex])
+  @@index([intent, callId])
+}
+
+// New: Conversation events for detailed analytics
+model ConversationEvent {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @db.Uuid
+  callId         String?      @db.Uuid
+  sessionId      String?      @db.VarChar(255)
+  eventType      String       @db.VarChar(100) // 'digression', 'escalation', 'confirmation_attempt', 'timeout', etc.
+  eventData      Json?        // Event-specific data
+  timestamp      DateTime     @default(now()) @db.Timestamptz(6)
+  
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  call           Call?        @relation(fields: [callId], references: [id], onDelete: Cascade)
+  
+  @@index([organizationId, eventType, timestamp])
+  @@index([callId, eventType])
+  @@index([sessionId])
+}
+
+// Enhanced Appointment model with location support
+model Appointment {
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String       @db.Uuid
+  locationId       String?      @db.Uuid // Reference to Location for at-business appointments
+  externalId       String?
+  calendarProvider String?      @db.VarChar
+  
+  // Service details
+  service          String?
+  provider         String?
+  duration         Int?         // Duration in minutes
+  
+  // Timing
+  startAt          DateTime     @db.Timestamptz(6)
+  endAt            DateTime     @db.Timestamptz(6)
+  
+  // Contact information
+  contactPhone     String?      @db.VarChar(20)
+  contactEmail     String?      @db.VarChar(255)
+  contactName      String?      @db.VarChar(255)
+  
+  // Location details
+  locationType     String?      @default("at_business") // 'on_site' | 'at_business' | 'remote'
+  serviceAddress   Json?        // For on-site appointments
+  
+  // Booking details
+  notes            String?
+  status           String?      @db.VarChar
+  bookingSource    String?      @default("voice_agent") // 'voice_agent' | 'web' | 'manual' | etc.
+  confirmationSent Boolean      @default(false)
+  
+  // Metadata
+  metadata         Json?        // Additional booking data
+  
+  createdAt        DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @db.Timestamptz(6)
+  
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location         Location?    @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  
+  @@index([organizationId, startAt])
+  @@index([organizationId, status])
+  @@index([contactPhone])
+  @@index([startAt, endAt])
+}
