@@ -291,10 +291,10 @@ fastify.register(async function (fastify) {
 
     sttService.on('error', (error) => {
       console.error('STT Service error:', error);
-      // Attempt to restart STT on error
+      // Attempt to restart STT on error only if we haven't started streaming yet
       setTimeout(() => {
-        if (!sttService.isListening) {
-          console.log('Attempting to restart STT service');
+        if (!sttService.isListening && !streamStarted) {
+          console.log('Attempting to restart STT service (pre-stream)');
           sttService.startListening();
         }
       }, 1000);
@@ -383,11 +383,12 @@ fastify.register(async function (fastify) {
       console.log(`Starting enhanced turn ${turnIndex}: "${transcript}"`);
 
       let responseText;
+      let processingResult;
       
       const { isEnhancedEnabled } = getEnhancedServices();
       if (enhancedSession && isEnhancedEnabled(organizationContext)) {
         // Use enhanced voice pipeline for turn processing
-        const enhancedResult = await getEnhancedVoicePipeline().processTurn(
+        processingResult = await getEnhancedVoicePipeline().processTurn(
           sessionId,
           transcript,
           confidence,
@@ -396,15 +397,15 @@ fastify.register(async function (fastify) {
         );
 
         console.log('✅ Enhanced turn processing complete:', {
-          intent: enhancedResult.intent,
-          confidence: enhancedResult.confidence,
-          state: enhancedResult.state,
-          hasResponse: !!enhancedResult.response,
-          processingTime: enhancedResult.processingTime
+          intent: processingResult.intent,
+          confidence: processingResult.confidence,
+          state: processingResult.state,
+          hasResponse: !!processingResult.response,
+          processingTime: processingResult.processingTime
         });
 
         // Use enhanced response
-        responseText = enhancedResult.response;
+        responseText = processingResult.response;
       } else {
         // Fallback to legacy LLM processing
         console.log('🔄 Using legacy LLM processing');
@@ -420,6 +421,7 @@ fastify.register(async function (fastify) {
         );
         
         responseText = llmResult.response;
+        processingResult = llmResult; // Use legacy result for logging
         console.log('✅ Legacy turn processing complete:', {
           intent: llmResult.intent,
           confidence: llmResult.confidence,
@@ -449,11 +451,11 @@ fastify.register(async function (fastify) {
       console.log(`Enhanced turn ${turnIndex} completed:`, {
         transcript,
         response: responseText,
-        intent: enhancedResult.intent,
-        confidence: enhancedResult.confidence,
-        state: enhancedResult.state,
+        intent: processingResult?.intent,
+        confidence: processingResult?.confidence,
+        state: processingResult?.state,
         processingTime: {
-          enhanced: enhancedResult.processingTime,
+          enhanced: processingResult?.processingTime,
           tts: ttsMs,
           total: totalMs
         }
@@ -474,16 +476,6 @@ fastify.register(async function (fastify) {
 
     } catch (error) {
       console.error('Error processing turn:', error);
-      
-      // Complete performance monitoring with error
-      if (currentTurnId) {
-        try {
-          await performanceMonitor.completeTurn(currentTurnId);
-        } catch (perfError) {
-          console.error('Error completing performance monitoring:', perfError);
-        }
-      }
-      
       await handleProcessingError(error);
     } finally {
       isProcessingTurn = false;
@@ -492,10 +484,33 @@ fastify.register(async function (fastify) {
     }
   };
 
-  // Handle prolonged silence
+  // Handle prolonged silence with contextual responses
   const handleSilence = async () => {
     try {
-      const timeoutResponse = "I'm still here. Are you ready to schedule an appointment?";
+      let timeoutResponse = "I'm here when you're ready. Take your time!";
+      
+      // Make response contextual based on conversation state
+      if (enhancedSession) {
+        const { isEnhancedEnabled } = getEnhancedServices();
+        if (isEnhancedEnabled(organizationContext)) {
+          const enhancedState = getEnhancedVoicePipeline().getSessionState(sessionId);
+          
+          if (enhancedState && enhancedState.context) {
+            const { service, timeWindow, contact } = enhancedState.context;
+            
+            if (service && !timeWindow) {
+              timeoutResponse = `No rush! Just let me know when you'd like to schedule that ${service} service.`;
+            } else if (service && timeWindow && !contact) {
+              timeoutResponse = `Take your time! I just need your contact info when you're ready.`;
+            } else if (!service) {
+              timeoutResponse = `I'm here when you're ready. What service can I help you schedule today?`;
+            } else {
+              timeoutResponse = `No worries, take your time thinking it over. I'm here when you're ready!`;
+            }
+          }
+        }
+      }
+      
       await ttsService.generateAndStream(timeoutResponse, ws, { streamId: streamSid });
       resetConversationTimeout();
     } catch (error) {
@@ -592,7 +607,7 @@ fastify.register(async function (fastify) {
       if (!isProcessingTurn) {
         handleSilence();
       }
-    }, 5000); // 5 second silence timeout
+    }, 12000); // 12 second silence timeout - more natural for conversation
   };
 
   const clearSilenceTimeout = () => {
@@ -658,7 +673,13 @@ fastify.register(async function (fastify) {
         // 🚀 IMMEDIATE: Start STT service without waiting for DB
         console.log('🚀 Starting STT service immediately (no DB wait)');
         streamStarted = true;
-        sttService.startListening();
+        
+        // Only start STT if it's not already listening
+        if (!sttService.isListening) {
+          sttService.startListening();
+        } else {
+          console.log('⚠️ STT service already listening, skipping start');
+        }
         
         // Try to send greeting immediately after stream starts
         console.log('🔍 Stream started, attempting to send greeting...');

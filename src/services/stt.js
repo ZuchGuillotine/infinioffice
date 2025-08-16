@@ -34,6 +34,7 @@ class STTService extends EventEmitter {
     this.currentTranscript = '';
     this.interimTranscript = '';
     this._readyEmitted = false;
+    this._connectionReady = false;
   }
 
   startListening(options = {}) {
@@ -63,6 +64,7 @@ class STTService extends EventEmitter {
       this.currentTranscript = '';
       this.interimTranscript = '';
       this._readyEmitted = false;
+      this._connectionReady = false;
     } catch (error) {
       console.error('Failed to create Deepgram connection:', error);
       this.isListening = false;
@@ -72,9 +74,12 @@ class STTService extends EventEmitter {
 
     this.connection.on('open', () => {
       console.log('STT connection opened successfully with config:', config);
+      this._connectionReady = true;
       this.emit('ready');
-      // Flush any queued audio data
-      this.flushAudioQueue();
+      // Flush any queued audio data with a small delay to ensure connection is fully ready
+      setTimeout(() => {
+        this.flushAudioQueue();
+      }, 100);
     });
 
     this.connection.on('warning', (warning) => {
@@ -88,6 +93,7 @@ class STTService extends EventEmitter {
     this.connection.on(LiveTranscriptionEvents.Close, (data) => {
       console.log('STT Connection closed:', data);
       this.isListening = false;
+      this._connectionReady = false;
       this.connection = null;
       this.emit('closed', data);
     });
@@ -273,37 +279,78 @@ class STTService extends EventEmitter {
   }
 
   sendAudio(audioData) {
-    if (this.connection && this.isListening && this.connection.readyState === 1) {
-      // console.log(`STT: Sending ${audioData.length} bytes to Deepgram`);
-      this.connection.send(audioData);
-      
-      // If this is the first successful audio send and we haven't emitted ready yet, emit it
-      if (!this._readyEmitted) {
-        console.log('STT: First successful audio send - emitting ready event');
-        this._readyEmitted = true;
-        this.emit('ready');
+    // For Deepgram connections, we use _connectionReady flag instead of readyState
+    const isConnectionReady = this.connection && this.isListening && this._connectionReady;
+    
+    // Try to send immediately if connection is ready
+    if (isConnectionReady) {
+      try {
+        this.connection.send(audioData);
+        
+        // If this is the first successful audio send and we haven't emitted ready yet, emit it
+        if (!this._readyEmitted) {
+          console.log('STT: First successful audio send - emitting ready event');
+          this._readyEmitted = true;
+          this.emit('ready');
+        }
+        return; // Successfully sent, no need to queue
+      } catch (error) {
+        console.warn('STT: Failed to send audio, will queue:', error.message);
+        this._connectionReady = false; // Mark connection as not ready
       }
-    } else {
-      // Queue audio data if connection isn't ready yet
-      if (!this.audioQueue) {
-        this.audioQueue = [];
+    }
+    
+    // Queue audio data if connection isn't ready or sending failed
+    if (!this.audioQueue) {
+      this.audioQueue = [];
+    }
+    
+    if (this.audioQueue.length < 100) { // Limit queue size to prevent memory issues
+      this.audioQueue.push(audioData);
+      
+      // Debug connection state periodically
+      if (this.audioQueue.length <= 5 || this.audioQueue.length % 20 === 0) {
+        console.log(`STT: Queued audio data (${this.audioQueue.length} chunks)`, {
+          hasConnection: !!this.connection,
+          isListening: this.isListening,
+          connectionReady: this._connectionReady,
+          readyState: this.connection?.readyState
+        });
       }
       
-      if (this.audioQueue.length < 100) { // Limit queue size to prevent memory issues
-        this.audioQueue.push(audioData);
-        console.log(`STT: Queued audio data (${this.audioQueue.length} chunks) - waiting for connection`);
+      // Try to flush queue if we think connection should be ready
+      if (isConnectionReady) {
+        setTimeout(() => this.flushAudioQueue(), 50);
       }
     }
   }
 
   flushAudioQueue() {
-    if (this.audioQueue && this.audioQueue.length > 0 && this.connection && this.isListening && this.connection.readyState === 1) {
+    const isConnectionReady = this.connection && this.isListening && this._connectionReady;
+    
+    console.log('STT: flushAudioQueue called', {
+      hasQueue: !!(this.audioQueue && this.audioQueue.length > 0),
+      queueLength: this.audioQueue?.length || 0,
+      hasConnection: !!this.connection,
+      isListening: this.isListening,
+      connectionReady: this._connectionReady,
+      readyState: this.connection?.readyState
+    });
+    
+    if (this.audioQueue && this.audioQueue.length > 0 && isConnectionReady) {
       console.log(`STT: Flushing ${this.audioQueue.length} queued audio chunks`);
-      while (this.audioQueue.length > 0) {
-        const audioData = this.audioQueue.shift();
-        this.connection.send(audioData);
+      try {
+        while (this.audioQueue.length > 0) {
+          const audioData = this.audioQueue.shift();
+          this.connection.send(audioData);
+        }
+        console.log('STT: Audio queue flushed successfully');
+      } catch (error) {
+        console.error('STT: Error flushing audio queue:', error);
+        this._connectionReady = false;
       }
-      console.log('STT: Audio queue flushed successfully');
+    } else {
+      console.log('STT: Cannot flush audio queue - conditions not met');
     }
   }
 

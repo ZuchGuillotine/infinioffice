@@ -26,192 +26,241 @@ const getOpenAIClient = () => {
 // Tool/Function Schemas for structured LLM outputs
 const TOOL_SCHEMAS = {
   set_slot: {
-    name: 'set_slot',
-    description: 'Capture and validate booking information for a specific slot',
-    parameters: {
-      type: 'object',
-      properties: {
-        slot_name: {
-          type: 'string',
-          enum: ['service', 'time_window', 'contact', 'location_kind', 'service_address', 'business_location_id'],
-          description: 'The booking slot to update'
+    type: "function",
+    function: {
+      name: 'set_slot',
+      description: 'Capture and validate booking information for a specific slot',
+      parameters: {
+        type: 'object',
+        properties: {
+          slot_name: {
+            type: 'string',
+            enum: ['service', 'time_window', 'contact', 'location_kind', 'service_address', 'business_location_id', 'details'],
+            description: 'The booking slot to update'
+          },
+          value: {
+            type: 'string',
+            description: 'The extracted value for this slot'
+          },
+          confidence: {
+            type: 'number',
+            minimum: 0,
+            maximum: 1,
+            description: 'Confidence in the extraction (0.0-1.0)'
+          }
         },
-        value: {
-          type: 'string',
-          description: 'The extracted value for this slot'
-        },
-        confidence: {
-          type: 'number',
-          minimum: 0,
-          maximum: 1,
-          description: 'Confidence in the extraction (0.0-1.0)'
-        }
-      },
-      required: ['slot_name', 'value', 'confidence']
+        required: ['slot_name', 'value', 'confidence']
+      }
     }
   },
 
   request_slot: {
-    name: 'request_slot',
-    description: 'Request specific missing information from the user',
-    parameters: {
-      type: 'object',
-      properties: {
-        slot_name: {
-          type: 'string',
-          enum: ['service', 'time_window', 'contact', 'location_preference', 'service_address', 'business_location'],
-          description: 'The missing slot to request'
+    type: "function",
+    function: {
+      name: 'request_slot',
+      description: 'Request specific missing information from the user',
+      parameters: {
+        type: 'object',
+        properties: {
+          slot_name: {
+            type: 'string',
+            enum: ['service', 'time_window', 'contact', 'location_preference', 'service_address', 'business_location'],
+            description: 'The missing slot to request'
+          },
+          message: {
+            type: 'string',
+            maxLength: 150,
+            description: 'Concise prompt to request this information (≤150 chars)'
+          },
+          options: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional list of choices for the user'
+          }
         },
-        message: {
-          type: 'string',
-          maxLength: 150,
-          description: 'Concise prompt to request this information (≤150 chars)'
+        required: ['slot_name', 'message']
+      }
+    }
+  },
+
+  clarify_service: {
+    type: "function",
+    function: {
+      name: 'clarify_service',
+      description: 'Clarify service when customer mentions multiple services or partial matches',
+      parameters: {
+        type: 'object',
+        properties: {
+          heard_content: {
+            type: 'string',
+            description: 'What the customer mentioned about their needs'
+          },
+          related_services: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'List of relevant services that match what they said'
+          },
+          clarifying_message: {
+            type: 'string',
+            maxLength: 150,
+            description: 'Message that acknowledges what they said and asks for clarification'
+          }
         },
-        options: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Optional list of choices for the user'
-        }
-      },
-      required: ['slot_name', 'message']
+        required: ['heard_content', 'related_services', 'clarifying_message']
+      }
     }
   },
 
   confirm_slot: {
-    name: 'confirm_slot',
-    description: 'Confirm a specific piece of booking information with the user',
-    parameters: {
-      type: 'object',
-      properties: {
-        slot_name: {
-          type: 'string',
-          enum: ['service', 'time_window', 'contact', 'location', 'final_booking'],
-          description: 'The slot to confirm'
+    type: "function",
+    function: {
+      name: 'confirm_slot',
+      description: 'Confirm a specific piece of booking information with the user',
+      parameters: {
+        type: 'object',
+        properties: {
+          slot_name: {
+            type: 'string',
+            enum: ['service', 'time_window', 'contact', 'location', 'final_booking'],
+            description: 'The slot to confirm'
+          },
+          value: {
+            type: 'string',
+            description: 'The value to confirm'
+          },
+          attempt_number: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 3,
+            description: 'Which confirmation attempt this is (1-3)'
+          },
+          message: {
+            type: 'string',
+            maxLength: 150,
+            description: 'Confirmation question (≤150 chars)'
+          }
         },
-        value: {
-          type: 'string',
-          description: 'The value to confirm'
-        },
-        attempt_number: {
-          type: 'integer',
-          minimum: 1,
-          maximum: 3,
-          description: 'Which confirmation attempt this is (1-3)'
-        },
-        message: {
-          type: 'string',
-          maxLength: 150,
-          description: 'Confirmation question (≤150 chars)'
-        }
-      },
-      required: ['slot_name', 'value', 'attempt_number', 'message']
+        required: ['slot_name', 'value', 'attempt_number', 'message']
+      }
     }
   },
 
   validate_location: {
-    name: 'validate_location',
-    description: 'Validate location information for service delivery',
-    parameters: {
-      type: 'object',
-      properties: {
-        location_type: {
-          type: 'string',
-          enum: ['on_site', 'at_business', 'remote'],
-          description: 'Type of service location'
+    type: "function",
+    function: {
+      name: 'validate_location',
+      description: 'Validate location information for service delivery',
+      parameters: {
+        type: 'object',
+        properties: {
+          location_type: {
+            type: 'string',
+            enum: ['on_site', 'at_business', 'remote'],
+            description: 'Type of service location'
+          },
+          address_or_branch: {
+            type: 'string',
+            description: 'Service address or branch identifier'
+          },
+          validation_message: {
+            type: 'string',
+            maxLength: 100,
+            description: 'Brief validation message'
+          }
         },
-        address_or_branch: {
-          type: 'string',
-          description: 'Service address or branch identifier'
-        },
-        validation_message: {
-          type: 'string',
-          maxLength: 100,
-          description: 'Brief validation message'
-        }
-      },
-      required: ['location_type', 'validation_message']
+        required: ['location_type', 'validation_message']
+      }
     }
   },
 
   schedule_appointment: {
-    name: 'schedule_appointment',
-    description: 'Create the final appointment with all confirmed details',
-    parameters: {
-      type: 'object',
-      properties: {
-        service: { type: 'string' },
-        date_time: { type: 'string' },
-        duration_minutes: { type: 'integer', minimum: 15, maximum: 480 },
-        location_type: { 
-          type: 'string',
-          enum: ['on_site', 'at_business', 'remote']
+    type: "function",
+    function: {
+      name: 'schedule_appointment',
+      description: 'Create the final appointment with all confirmed details',
+      parameters: {
+        type: 'object',
+        properties: {
+          service: { type: 'string' },
+          date_time: { type: 'string' },
+          duration_minutes: { type: 'integer', minimum: 15, maximum: 480 },
+          location_type: { 
+            type: 'string',
+            enum: ['on_site', 'at_business', 'remote']
+          },
+          location_details: { type: 'string' },
+          contact_info: { type: 'string' },
+          special_notes: { type: 'string' },
+          success_message: {
+            type: 'string',
+            maxLength: 200,
+            description: 'Confirmation message for user (≤200 chars)'
+          }
         },
-        location_details: { type: 'string' },
-        contact_info: { type: 'string' },
-        special_notes: { type: 'string' },
-        success_message: {
-          type: 'string',
-          maxLength: 200,
-          description: 'Confirmation message for user (≤200 chars)'
-        }
-      },
-      required: ['service', 'date_time', 'contact_info', 'success_message']
+        required: ['service', 'date_time', 'contact_info', 'success_message']
+      }
     }
   },
 
   escalate: {
-    name: 'escalate',
-    description: 'Escalate to human agent when automated booking fails',
-    parameters: {
-      type: 'object',
-      properties: {
-        escalation_type: {
-          type: 'string',
-          enum: ['callback', 'transfer', 'voicemail'],
-          description: 'Type of escalation needed'
+    type: "function",
+    function: {
+      name: 'escalate',
+      description: 'Escalate to human agent when automated booking fails',
+      parameters: {
+        type: 'object',
+        properties: {
+          escalation_type: {
+            type: 'string',
+            enum: ['callback', 'transfer', 'voicemail'],
+            description: 'Type of escalation needed'
+          },
+          reason: {
+            type: 'string',
+            enum: ['service_unclear', 'time_unavailable', 'contact_invalid', 'location_complex', 'technical_issue'],
+            description: 'Reason for escalation'
+          },
+          context_summary: {
+            type: 'string',
+            maxLength: 300,
+            description: 'Summary of conversation for human agent'
+          },
+          escalation_message: {
+            type: 'string',
+            maxLength: 150,
+            description: 'Message to user about escalation'
+          }
         },
-        reason: {
-          type: 'string',
-          enum: ['service_unclear', 'time_unavailable', 'contact_invalid', 'location_complex', 'technical_issue'],
-          description: 'Reason for escalation'
-        },
-        context_summary: {
-          type: 'string',
-          maxLength: 300,
-          description: 'Summary of conversation for human agent'
-        },
-        escalation_message: {
-          type: 'string',
-          maxLength: 150,
-          description: 'Message to user about escalation'
-        }
-      },
-      required: ['escalation_type', 'reason', 'escalation_message']
+        required: ['escalation_type', 'reason', 'escalation_message']
+      }
     }
   },
 
   fetch_business_fact: {
-    name: 'fetch_business_fact',
-    description: 'Retrieve business information for FAQ responses',
-    parameters: {
-      type: 'object',
-      properties: {
-        fact_type: {
-          type: 'string',
-          enum: ['hours', 'location', 'services', 'pricing', 'policies', 'contact'],
-          description: 'Type of business information requested'
+    type: "function",
+    function: {
+      name: 'fetch_business_fact',
+      description: 'Retrieve business information for FAQ responses',
+      parameters: {
+        type: 'object',
+        properties: {
+          fact_type: {
+            type: 'string',
+            enum: ['hours', 'location', 'services', 'pricing', 'policies', 'contact'],
+            description: 'Type of business information requested'
+          },
+          specific_query: {
+            type: 'string',
+            description: 'Specific aspect of the fact type'
+          },
+          response_message: {
+            type: 'string',
+            maxLength: 200,
+            description: 'Formatted response with the business fact'
+          }
         },
-        specific_query: {
-          type: 'string',
-          description: 'Specific aspect of the fact type'
-        },
-        response_message: {
-          type: 'string',
-          maxLength: 200,
-          description: 'Formatted response with the business fact'
-        }
-      },
-      required: ['fact_type', 'response_message']
+        required: ['fact_type', 'response_message']
+      }
     }
   }
 };
@@ -242,7 +291,7 @@ class EnhancedIntentDetector {
           { role: 'system', content: systemPrompt },
           { role: 'user', content: transcript }
         ],
-        tools: [TOOL_SCHEMAS.set_slot, TOOL_SCHEMAS.fetch_business_fact],
+        tools: [TOOL_SCHEMAS.set_slot, TOOL_SCHEMAS.clarify_service, TOOL_SCHEMAS.fetch_business_fact],
         tool_choice: 'auto',
         temperature: 0.1,
         max_tokens: 150,
@@ -294,10 +343,10 @@ class EnhancedIntentDetector {
       ? `Recent conversation: ${history.map(h => `"${h.transcript}" → ${h.intent}`).join('; ')}`
       : 'Start of conversation';
 
-    return `You are an advanced intent classifier for ${orgName}'s voice booking system.
+    return `You are a friendly, conversational voice assistant for ${orgName}. You help customers book appointments naturally.
 
 CURRENT CONTEXT:
-- Business: ${orgName}
+- Business: ${orgName}  
 - Services: ${serviceList || 'General appointments'}
 - Location mode: ${locationMode}
 - Current booking state: service=${context.service || 'none'}, time=${context.timeWindow || 'none'}, contact=${context.contact || 'none'}
@@ -308,21 +357,36 @@ Return JSON with: {"intent": "intent_name", "confidence": 0.0-1.0, "entities": {
 
 INTENT CATEGORIES:
 1. booking - User wants to schedule (e.g., "I need an appointment", "book me in")
-2. service_provided - User specified service (e.g., "haircut", "consultation", "repair")
-3. time_provided - User specified time (e.g., "tomorrow 2pm", "next Friday morning")
+2. service_provided - User specified service (e.g., "haircut", "consultation", "repair", "quote for tree removal")
+3. time_provided - User specified time (e.g., "Thursday at 3PM", "tomorrow 2pm", "next Friday morning", "Monday") 
 4. contact_provided - User gave contact info (name, phone, email)
-5. location_provided - User specified location preference or address
+5. location_provided - User specified location preference or address (e.g., "652 Cherry Avenue", "at my house")
 6. location_preference - User indicated on-site vs at-business preference
 7. confirmation_yes - User confirmed (yes, correct, that's right)
 8. confirmation_no - User declined (no, wrong, change that)
 9. digression_question - User asked about hours/location/services/pricing
 10. unclear - Cannot determine intent clearly
 
+IMPORTANT: If user provides multiple types of info in one statement, choose the PRIMARY intent but extract ALL entities.
+Example: "Thursday at 3PM at 652 Cherry Avenue" → intent: time_provided, but extract BOTH timeWindow AND location.
+
+SERVICE MATCHING RULES:
+- "Quote", "bid", "estimate", "pricing" → "Quote or Bid" (this is ONE service)
+- "Tree removal", "remove tree", "take down tree", "tree falling" → "Tree Falling"
+- "Stump", "stump removal", "stump grinding" → "Stump Grinding"
+- "Cleanup", "clean up", "debris removal" → "Cleanup"  
+- "Chip drop", "wood chips", "mulch delivery" → "Chip Drop"
+
 ENTITY EXTRACTION:
-- service: Match against available services (${serviceList})
-- timeWindow: Any time/date reference
-- contact: Phone numbers, names, emails
-- location: Addresses, branch preferences, on-site requests
+- service: Match against available services using the rules above
+  * Extract the best-matching service name from available options
+  * Capture additional details (e.g., "oak tree", "large stump") in a details field
+- timeWindow: ANY time/date reference (e.g., "Thursday at 3PM", "tomorrow morning", "next week", "Monday", "2pm")
+- contact: Phone numbers, names, emails (e.g., "555-1234", "John Smith", "john@email.com")
+- location: Addresses, branch preferences, on-site requests (e.g., "652 Cherry Avenue", "downtown location", "my house")
+- details: Additional context about the service (tree type, size, etc.)
+
+CRITICAL: Always extract time, location, and contact info when mentioned, even if mentioned with other information.
 
 LOCATION HANDLING:
 ${locationMode === 'on_site' ? '- This business provides on-site services - extract addresses' : ''}
@@ -354,16 +418,16 @@ Keep responses under 50 tokens except for final confirmations.`;
     const entities = this.extractEntitiesFromTools(tool_calls, context);
 
     // Merge entities with parsed content
-    if (parsedContent.entities) {
+    if (parsedContent && parsedContent.entities) {
       Object.assign(entities, parsedContent.entities);
     }
 
     return {
-      intent: parsedContent.intent || 'unclear',
-      confidence: parsedContent.confidence || 0.0,
+      intent: (parsedContent && parsedContent.intent) || 'unclear',
+      confidence: (parsedContent && parsedContent.confidence) || 0.0,
       entities,
       tool_calls,
-      reasoning: parsedContent.reasoning || '',
+      reasoning: (parsedContent && parsedContent.reasoning) || '',
       rawText: transcript
     };
   }
@@ -384,7 +448,8 @@ Keep responses under 50 tokens except for final confirmations.`;
           'contact': 'contact',
           'location_kind': 'locationKind',
           'service_address': 'serviceAddress',
-          'business_location_id': 'businessLocationId'
+          'business_location_id': 'businessLocationId',
+          'details': 'details'
         };
         
         const entityKey = slotMapping[slotName] || slotName;
@@ -431,8 +496,8 @@ class EnhancedResponseGenerator {
         ],
         tools: this.getRelevantTools(intent, context),
         tool_choice: this.determineToolChoice(intent, context),
-        temperature: 0.2,
-        max_tokens: 80, // Strict token limit for low latency
+        temperature: 0.4,
+        max_tokens: 150, // Allow for more verbose, chatty conversation
       });
 
       const result = this.parseResponseWithTools(response, intent, context);
@@ -467,7 +532,7 @@ class EnhancedResponseGenerator {
     const progressSummary = context.progressSummary || '';
     const confirmationAttempts = context.confirmationAttempts || {};
 
-    return `You are ${orgName}'s professional voice booking assistant. Generate concise, helpful responses.
+    return `You are a friendly, conversational assistant at ${orgName}. Sound natural and human, not robotic.
 
 CURRENT SITUATION:
 - Intent: ${intent}
@@ -483,36 +548,56 @@ BUSINESS INFO:
 - Services: ${servicelist}
 - Custom scripts: ${Object.keys(orgScripts).join(', ') || 'using defaults'}
 
-RESPONSE REQUIREMENTS:
-- Keep responses under 50 tokens
-- Use tools for structured actions
-- Be conversational but efficient
-- Reference progress when appropriate
-- Escalate after 3 attempts on any slot
+CONVERSATION STYLE:
+- Be VERY chatty, friendly, and conversational - sound like a helpful neighbor
+- Acknowledge specific details customers mention (tree type, size, location details, etc.)
+- Use enthusiastic conversational phrases: "Oh perfect!", "That sounds great!", "Absolutely!", "I love helping with that!"
+- Reference what they said: "So you need a quote for that oak tree removal - oak trees can be tricky!"
+- Ask natural follow-up questions: "How big is that oak tree?" "Is it close to any power lines?" "When were you thinking?"
+- Collect extra details that would help a human scheduler: tree size, urgency, access concerns, etc.
+- Be verbose and natural - don't be afraid to chat while collecting info
+- Show genuine interest: "Oak trees are beautiful but they can be quite large!" "652 Cherry Avenue - I know that area!"
 
-THREE-STRIKE CONFIRMATION:
-- Attempt 1: Direct, friendly confirmation
-- Attempt 2: Clearer, more specific language
-- Attempt 3: Very explicit, offer alternatives or escalation
+RESPONSE REQUIREMENTS:
+- Keep responses under 150 tokens but be naturally verbose and chatty
+- Use tools for structured actions but wrap them in natural conversation
+- Always acknowledge what customer said specifically and show interest
+- Reference their details and ask natural follow-up questions
+- Move conversation forward smoothly while building rapport
+- Don't repeat the same response - adapt and build on what they just said
+- Collect useful extra context for the human who will handle the actual service
 
 TOOLS AVAILABLE:
-- request_slot: Ask for missing information
-- confirm_slot: Confirm specific details
+- request_slot: Ask for missing information naturally
+- confirm_slot: Confirm specific details conversationally  
+- clarify_service: Only use when genuinely ambiguous between different services
 - validate_location: Handle location logistics
 - schedule_appointment: Complete booking
 - escalate: Transfer to human
 - fetch_business_fact: Answer FAQ questions
 
-Use tools instead of just text when taking actions.`;
+IMPORTANT RULES:
+- "Quote or Bid" is ONE service, not two - never ask customer to choose between quote and bid
+- When customer says "quote" and you have "Quote or Bid" service, that's a match - proceed to next step
+- Always reference specific details they mentioned (tree type, location, etc.)
+- Sound conversational: "Great! So you need a quote for removing that oak tree. When would work best for you?"
+
+Use tools to take actions, but make the conversation flow naturally.`;
   }
 
   buildUserMessage(intent, context) {
     const parts = [`User intent: ${intent}`];
     
     if (context.service) parts.push(`Service mentioned: ${context.service}`);
+    if (context.entities?.details) parts.push(`Additional details: ${context.entities.details}`);
     if (context.timeWindow) parts.push(`Time mentioned: ${context.timeWindow}`);
     if (context.contact) parts.push(`Contact provided: ${context.contact}`);
     if (context.locationKind) parts.push(`Location type: ${context.locationKind}`);
+    
+    // Add conversational context from recent transcript
+    if (context.lastTranscript) {
+      parts.push(`Customer just said: "${context.lastTranscript}"`);
+    }
     
     return parts.join('. ');
   }
@@ -522,7 +607,7 @@ Use tools instead of just text when taking actions.`;
     
     switch (intent) {
       case 'service_provided':
-        return [...baseTools, TOOL_SCHEMAS.confirm_slot];
+        return [...baseTools, TOOL_SCHEMAS.confirm_slot, TOOL_SCHEMAS.clarify_service];
       
       case 'time_provided':
         return [...baseTools, TOOL_SCHEMAS.confirm_slot];
@@ -542,6 +627,9 @@ Use tools instead of just text when taking actions.`;
       
       case 'digression_question':
         return [TOOL_SCHEMAS.fetch_business_fact, ...baseTools];
+      
+      case 'unclear':
+        return [...baseTools, TOOL_SCHEMAS.clarify_service];
       
       default:
         return baseTools;
@@ -580,6 +668,8 @@ Use tools instead of just text when taking actions.`;
       // Use tool-specific message if available
       if (args.message) {
         textResponse = args.message;
+      } else if (args.clarifying_message) {
+        textResponse = args.clarifying_message;
       } else if (args.response_message) {
         textResponse = args.response_message;
       } else if (args.success_message) {
@@ -615,18 +705,22 @@ Use tools instead of just text when taking actions.`;
   }
 
   getFallbackResponse(intent, context) {
+    const servicelist = context.businessConfig?.services?.filter(s => s.active)?.map(s => s.name).join(', ') || 'our services';
+    
     const fallbacks = {
-      booking: "I'm here to help you schedule an appointment. What service do you need?",
-      service_provided: `What type of service are you looking for today?`,
-      time_provided: "When would you like to schedule your appointment?",
-      contact_provided: "Can I get your contact information?",
-      location_provided: "Where would you like the service?",
-      confirmation_yes: "Great! Let me confirm those details.",
-      confirmation_no: "Let me get that corrected for you.",
-      unclear: "I want to make sure I understand. Are you looking to schedule an appointment?"
+      booking: "Oh absolutely! I'd love to help you schedule an appointment. What kind of service are you looking for today?",
+      service_provided: context.service 
+        ? `Perfect! So you need ${context.service} - that's one of our most popular services! When would work best for you? Any particular day or time you had in mind?`
+        : `That's great! What type of service are you looking for? We specialize in ${servicelist}. Each one's a little different, so let me know what you need!`,
+      time_provided: "Oh perfect timing! I love when customers know what works for them. Now, what's the best contact number to reach you at?",
+      contact_provided: "Wonderful! I've got your contact info. This is going to work out great - let me get this all scheduled for you!",
+      location_provided: "Great, thanks for that location info! That helps us plan everything out. When would work best for you?",
+      confirmation_yes: "Excellent! I'm so glad we got all that sorted out. Let me get that booked for you right away!",
+      confirmation_no: "No worries at all! Let me get that corrected for you. We want to make sure everything's exactly right.",
+      unclear: "I want to make sure I understand exactly what you need. Are you looking to schedule one of our services today?"
     };
     
-    return fallbacks[intent] || "How can I help you today?";
+    return fallbacks[intent] || "Hi there! How can I help you today? I'm here to help with any of our services!";
   }
 }
 
@@ -664,7 +758,7 @@ class EnhancedLLMService {
       
       const responseResult = await this.responseGenerator.generateResponse(
         intentResult.intent,
-        { ...context, ...intentResult.entities },
+        { ...context, ...intentResult.entities, lastTranscript: transcript },
         attemptNumber
       );
       const responseMs = Date.now() - responseStartTime;
@@ -794,6 +888,9 @@ class EnhancedLLMService {
       case 'fetch_business_fact':
         return this.handleFetchBusinessFact(args, context);
       
+      case 'clarify_service':
+        return this.handleClarifyService(args, context);
+      
       default:
         throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -876,6 +973,15 @@ class EnhancedLLMService {
       facts,
       response: args.response_message,
       action: 'business_fact_retrieved'
+    };
+  }
+
+  handleClarifyService(args, context) {
+    return {
+      heard_content: args.heard_content,
+      related_services: args.related_services,
+      message: args.clarifying_message,
+      action: 'service_clarification_requested'
     };
   }
 
