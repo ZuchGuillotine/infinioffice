@@ -42,18 +42,22 @@ const bookingMachine = createMachine({
             service: ({ context, event }) => {
               const newService = event.bookingData?.service || event.entities?.service;
               const result = newService || context.service;
-              if (newService) {
-                console.log(`🔧 State Machine: Service updated from "${context.service}" to "${result}"`);
-              }
+              console.log(`🔧 State Machine (idle): Service assign - bookingData.service="${event.bookingData?.service}", entities.service="${event.entities?.service}", current="${context.service}", result="${result}"`);
               return result;
             },
             preferredTime: ({ context, event }) => {
               const newTime = event.bookingData?.preferredTime || event.entities?.timeWindow;
-              return newTime || context.preferredTime;
+              const result = newTime || context.preferredTime;
+              console.log(`🔧 State Machine (idle): PreferredTime assign - bookingData.preferredTime="${event.bookingData?.preferredTime}", entities.timeWindow="${event.entities?.timeWindow}", current="${context.preferredTime}", result="${result}"`);
+              return result;
             },
             contact: ({ context, event }) => {
               const newContact = event.bookingData?.contact || event.entities?.contact;
-              return newContact || context.contact;
+              const result = newContact || context.contact;
+              if (newContact) {
+                console.log(`🔧 State Machine: Contact updated from "${context.contact}" to "${result}"`);
+              }
+              return result;
             },
             // Preserve enhanced context fields
             businessConfig: ({ context, event }) => {
@@ -274,7 +278,40 @@ const bookingMachine = createMachine({
             target: 'book',
           },
           {
-            actions: 'resetBookingData',
+            // Update context with any new data before potentially resetting
+            actions: [
+              assign({
+                service: ({ context, event }) => {
+                  const newService = event.bookingData?.service || event.entities?.service;
+                  const result = newService || context.service;
+                  if (newService) {
+                    console.log(`🔧 State Machine (confirm): Service updated from "${context.service}" to "${result}"`);
+                  }
+                  return result;
+                },
+                preferredTime: ({ context, event }) => {
+                  const newTime = event.bookingData?.preferredTime || event.entities?.timeWindow;
+                  const result = newTime || context.preferredTime;
+                  if (newTime) {
+                    console.log(`🔧 State Machine (confirm): Time updated from "${context.preferredTime}" to "${result}"`);
+                  }
+                  return result;
+                },
+                contact: ({ context, event }) => {
+                  const newContact = event.bookingData?.contact || event.entities?.contact;
+                  const result = newContact || context.contact;
+                  if (newContact) {
+                    console.log(`🔧 State Machine (confirm): Contact updated from "${context.contact}" to "${result}"`);
+                  }
+                  return result;
+                },
+                serviceValidated: ({ context, event }) => {
+                  return event.bookingData?.serviceValidated !== undefined ? event.bookingData.serviceValidated : context.serviceValidated;
+                },
+                currentResponse: ({ event }) => event.response,
+              }),
+              'resetBookingData'
+            ],
             target: 'collectService',
           },
         ],
@@ -396,8 +433,8 @@ const bookingMachine = createMachine({
     },
     shouldFallbackToCallback: ({ context, event }) => {
       // Check if we should fallback to callback scheduling
-      // Only fallback after significant attempts have been made
-      const multipleRetries = (context.retryCount || 0) >= 5; // Increased from 3 to 5
+      // Only fallback after 3 failed attempts (as per user requirements)
+      const multipleRetries = (context.retryCount || 0) >= 3; // Set to 3 as requested
       const persistentServiceIssue = context.service && context.serviceValidated === false && (context.retryCount || 0) >= 3;
       const calendarFailure = context.calendarError || context.integrationFailure;
       

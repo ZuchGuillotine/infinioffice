@@ -39,6 +39,7 @@ fastify.addContentTypeParser('application/json', { parseAs: 'string' }, function
 const { handleIncomingCall, callStore } = require('./services/telephony');
 const { STTService } = require('./services/stt');
 const { processMessage, sessionManager, getCompletion } = require('./services/llm');
+const { createLLMService } = require('./services/llm_fast');
 const { TTSService } = require('./services/tts');
 const { bookingMachine } = require('./services/stateMachine');
 const { createCall, createTurn, updateTurn, updateCall } = require('./services/db');
@@ -163,6 +164,13 @@ fastify.register(async function (fastify) {
     const sttService = new STTService();
     const ttsService = new TTSService();
     
+    // Initialize fast LLM service with gpt-4o model
+    const fastLLM = createLLMService({
+      model: 'gpt-4o', // Use gpt-4o as requested, not gpt-4o-mini
+      maxTokens: 160,
+      temperature: 0.4
+    });
+    
     // Initialize enhanced voice pipeline (with fallback to legacy) - lazy loaded
     let enhancedVoicePipeline = null;
     function getEnhancedVoicePipeline() {
@@ -264,17 +272,34 @@ fastify.register(async function (fastify) {
       }
     });
 
+    // CRITICAL FIX: Add barge-in debouncing to prevent duplicate events
+    let lastBargeInTime = 0;
+    const BARGE_IN_DEBOUNCE_MS = 300;
+    
     sttService.on('bargeIn', () => {
+      const now = Date.now();
+      
+      // Debounce barge-in events - ignore if within 300ms of last barge-in
+      if (now - lastBargeInTime < BARGE_IN_DEBOUNCE_MS) {
+        console.log('🔇 Barge-in debounced - ignoring duplicate within 300ms');
+        return;
+      }
+      
+      lastBargeInTime = now;
       console.log('Barge-in detected - interrupting TTS');
       ttsService.interruptStream();
       
-      // Notify enhanced voice pipeline of barge-in if available
+      // CRITICAL FIX: Disable enhanced voice pipeline interference during fast LLM testing
+      // The enhanced pipeline has its own state machine that conflicts with our main one
+      // TODO: Re-enable when enhanced pipeline is properly integrated with fast LLM
+      /*
       if (enhancedSession) {
         const { isEnhancedEnabled } = getEnhancedServices();
         if (isEnhancedEnabled(organizationContext)) {
           getEnhancedVoicePipeline().handleBargeIn(sessionId);
         }
       }
+      */
       
       resetConversationTimeout();
     });
@@ -283,13 +308,15 @@ fastify.register(async function (fastify) {
       console.log('Speech started');
       clearSilenceTimeout();
       
-      // Notify enhanced voice pipeline if available
+      // CRITICAL FIX: Disabled enhanced voice pipeline integration during fast LLM testing
+      /*
       if (enhancedSession) {
         const { isEnhancedEnabled } = getEnhancedServices();
         if (isEnhancedEnabled(organizationContext)) {
           getEnhancedVoicePipeline().handleSpeechEvent(sessionId, 'speechStarted');
         }
       }
+      */
     });
 
     sttService.on('speechEnded', () => {
@@ -299,13 +326,15 @@ fastify.register(async function (fastify) {
         resetSilenceTimeout();
       }
       
-      // Notify enhanced voice pipeline if available
+      // CRITICAL FIX: Disabled enhanced voice pipeline integration during fast LLM testing
+      /*
       if (enhancedSession) {
         const { isEnhancedEnabled } = getEnhancedServices();
         if (isEnhancedEnabled(organizationContext)) {
           getEnhancedVoicePipeline().handleSpeechEvent(sessionId, 'speechEnded');
         }
       }
+      */
     });
 
     sttService.on('silence', () => {
@@ -407,7 +436,43 @@ fastify.register(async function (fastify) {
     return false;
   };
 
-  // Process a complete turn using enhanced voice pipeline
+  // State machine actor for managing booking flow
+  let stateMachineActor = null;
+  
+  // Initialize state machine actor with context
+  const initializeStateMachine = () => {
+    if (!stateMachineActor) {
+      const { interpret } = require('xstate');
+      
+      // Initialize with organization context
+      const initialContext = {
+        sessionId: sessionId,
+        businessConfig: organizationContext?.businessConfig || null,
+        // Initialize other context fields to null
+        intent: null,
+        service: null,
+        preferredTime: null,
+        contact: null,
+        confidence: 0,
+        currentResponse: null,
+        serviceValidated: false,
+        calendarError: false,
+        integrationFailure: false,
+        retryCount: 0,
+        fallbackReason: null,
+      };
+      
+      stateMachineActor = interpret(bookingMachine, { context: initialContext }).start();
+      console.log('📋 State machine actor initialized with context:', {
+        sessionId: sessionId,
+        hasBusinessConfig: !!organizationContext?.businessConfig,
+        servicesCount: organizationContext?.businessConfig?.services?.length || 0
+      });
+    }
+    return stateMachineActor;
+  };
+
+  // Process a complete turn using fast LLM and state machine
   const processTurn = async (transcript, confidence) => {
     console.log(`processTurn called with transcript: "${transcript}", isProcessingTurn: ${isProcessingTurn}`);
     
@@ -420,63 +485,182 @@ fastify.register(async function (fastify) {
     const turnStartTime = Date.now();
 
     try {
-      console.log(`Starting enhanced turn ${turnIndex}: "${transcript}"`);
+      console.log(`Starting fast LLM turn ${turnIndex}: "${transcript}"`);
 
       let responseText;
       let processingResult;
       
-      const { isEnhancedEnabled } = getEnhancedServices();
-      if (enhancedSession && isEnhancedEnabled(organizationContext)) {
-        // Use enhanced voice pipeline for turn processing
-        processingResult = await getEnhancedVoicePipeline().processTurn(
-          sessionId,
-          transcript,
-          confidence,
-          callId,
-          turnIndex
-        );
-
-        console.log('✅ Enhanced turn processing complete:', {
-          intent: processingResult.intent,
-          confidence: processingResult.confidence,
-          state: processingResult.state,
-          hasResponse: !!processingResult.response,
-          processingTime: processingResult.processingTime
-        });
-
-        // Use enhanced response
-        responseText = processingResult.response;
+      // TEMPORARILY DISABLED: Enhanced voice pipeline for manual testing of fast LLM
+      const useEnhancedPipeline = false; // Set to true to re-enable enhanced pipeline
+      
+      if (false && enhancedSession && useEnhancedPipeline) {
+        // Enhanced pipeline temporarily disabled for testing
+        console.log('🚫 Enhanced pipeline disabled for fast LLM testing');
+        responseText = "Enhanced pipeline disabled";
+        processingResult = { intent: 'unclear', confidence: 0, response: responseText };
       } else {
-        // Fallback to legacy LLM processing
-        console.log('🔄 Using legacy LLM processing');
-        const llmResult = await processMessage(
+        // Use new fast LLM service
+        console.log('🚀 Using fast LLM processing');
+        
+        // Get current state machine context for LLM
+        const actor = initializeStateMachine();
+        const currentState = actor.getSnapshot();
+        
+        // Prepare context for fast LLM service including current state machine context
+        const fastLLMContext = {
+          organizationContext: organizationContext,
+          businessConfig: organizationContext.businessConfig,
+          // Include current state machine context and slots
+          state: currentState.value,
+          slots: {
+            service: currentState.context.service,
+            timeWindow: currentState.context.preferredTime,
+            contact: currentState.context.contact,
+            location: null, // Add location support if needed
+            notes: null // Add notes support if needed
+          },
+          // Include summary for fast LLM session management
+          summary: currentState.context.service ? 
+            `service=${currentState.context.service}, time=${currentState.context.preferredTime || 'pending'}, contact=${currentState.context.contact || 'pending'}` : 
+            ''
+        };
+        
+        // Process with streaming enabled for better latency
+        const llmResult = await fastLLM.processMessage({
           transcript,
           sessionId,
-          { 
-            state: 'idle',
-            organizationContext: organizationContext,
-            organizationId: organizationContext.organizationId,
-            businessConfig: organizationContext.businessConfig
+          context: fastLLMContext,
+          stream: true, // Enable streaming for TTS integration
+          onTextStart: () => {
+            console.log('🔊 Fast LLM text streaming started');
+          },
+          onTextDelta: (chunk) => {
+            // Stream chunks directly to TTS if needed in future
+            // For now, we'll let the TTS handle the full response
+            console.log('📝 Fast LLM streaming chunk:', chunk.substring(0, 20) + '...');
+          },
+          onTextDone: (finalText) => {
+            console.log('✅ Fast LLM streaming complete, final text length:', finalText?.length);
           }
-        );
+        });
         
         responseText = llmResult.response;
-        processingResult = llmResult; // Use legacy result for logging
-        console.log('✅ Legacy turn processing complete:', {
+        processingResult = llmResult; // Use fast LLM result for logging
+        console.log('✅ Fast LLM processing complete:', {
           intent: llmResult.intent,
           confidence: llmResult.confidence,
-          response: responseText?.substring(0, 100) + '...'
+          response: responseText?.substring(0, 100) + '...',
+          processingTime: llmResult.processingTime
         });
+        
+
+        console.log('📋 Current state machine state before processing:', currentState.value);
+        
+        // CRITICAL FIX: Use frame data instead of top-level intent/entities
+        // The frame contains the properly parsed intent and entities
+        const frameIntent = (llmResult.frame && llmResult.frame.intent) ? llmResult.frame.intent : llmResult.intent;
+        const frameEntities = (llmResult.frame && llmResult.frame.entities) ? llmResult.frame.entities : llmResult.entities;
+        const frameConfidence = (llmResult.frame && typeof llmResult.frame.confidence === 'number') ? llmResult.frame.confidence : llmResult.confidence;
+        
+        // Validate service if provided - use frame entities
+        let serviceValidated = false;
+        if (frameEntities?.service && organizationContext.businessConfig) {
+          const { validateService } = require('./services/stateMachine');
+          serviceValidated = validateService(frameEntities.service, organizationContext.businessConfig);
+          console.log(`🔍 Service validation result for "${frameEntities.service}": ${serviceValidated}`);
+        }
+        
+        console.log('📋 Using frame data:', {
+          frameIntent,
+          frameEntities,
+          frameConfidence,
+          rawIntent: llmResult.intent,
+          rawEntities: llmResult.entities
+        });
+        
+        // Send LLM results to state machine with properly mapped data
+        const eventData = {
+          type: 'PROCESS_INTENT',
+          intent: frameIntent,
+          confidence: frameConfidence,
+          entities: frameEntities,
+          response: responseText,
+          businessConfig: organizationContext.businessConfig,
+          originalSpeech: transcript,
+          // Map fast LLM entities to state machine bookingData format
+          bookingData: {
+            service: frameEntities?.service,
+            preferredTime: frameEntities?.timeWindow,
+            contact: frameEntities?.contact,
+            location: frameEntities?.location,
+            notes: frameEntities?.notes,
+            serviceValidated: serviceValidated, // Add service validation result
+            businessConfig: organizationContext.businessConfig,
+            sessionId: sessionId
+          }
+        };
+        
+        console.log('📋 Sending event to state machine:', {
+          type: eventData.type,
+          intent: eventData.intent,
+          entities: eventData.entities,
+          bookingData: eventData.bookingData
+        });
+        
+        actor.send(eventData);
+        
+        const newState = actor.getSnapshot();
+        console.log('📋 State machine transition:', {
+          from: currentState.value,
+          to: newState.value,
+          context: {
+            service: newState.context.service,
+            serviceValidated: newState.context.serviceValidated,
+            preferredTime: newState.context.preferredTime,
+            contact: newState.context.contact,
+            retryCount: newState.context.retryCount
+          }
+        });
+        
+        // CRITICAL FIX: Only use state machine response if it's actually different and new
+        // Don't reuse the same cached response from previous turns
+        const stateMachineResponse = newState.context.currentResponse;
+        const shouldUseStateMachineResponse = stateMachineResponse && 
+          stateMachineResponse !== responseText && 
+          stateMachineResponse.trim().length > 0;
+          
+        if (shouldUseStateMachineResponse) {
+          console.log('📋 Using state machine response instead of LLM response');
+          console.log('📋 SM Response:', stateMachineResponse.substring(0, 100));
+          console.log('📋 LLM Response:', responseText.substring(0, 100));
+          responseText = stateMachineResponse;
+          
+          // Update the processing result to reflect state machine override
+          processingResult = {
+            ...processingResult,
+            response: responseText,
+            stateMachineOverride: true
+          };
+        } else {
+          console.log('📋 Using LLM response (no valid state machine override)');
+        }
       }
 
-      // Step 3: Generate and stream TTS
+      // Step 3: Sanitize response text and generate TTS
+      // CRITICAL FIX: Strip any leaked <frame> tags before sending to TTS
+      let sanitizedText = responseText;
+      if (sanitizedText && sanitizedText.includes('<frame>')) {
+        console.error('🚨 FRAME_LEAK detected - stripping frame tags from TTS');
+        sanitizedText = sanitizedText.replace(/<frame>[\s\S]*?<\/frame>/g, '').trim();
+      }
+      
       console.log('🔊 Starting TTS generation:', {
-        text: responseText?.substring(0, 50) + '...',
+        text: sanitizedText?.substring(0, 50) + '...',
         streamSid: streamSid
       });
       
       const ttsStartTime = Date.now();
-      const ttsResult = await ttsService.generateAndStream(responseText, ws, { 
+      const ttsResult = await ttsService.generateAndStream(sanitizedText, ws, { 
         streamId: streamSid,
         ttsConfig: {
           model: organizationContext?.businessConfig?.voiceSettings?.voiceModel || 'harmonia'
@@ -507,6 +691,22 @@ fastify.register(async function (fastify) {
       });
 
       turnIndex++;
+
+      // Check for final states and handle completion
+      if (stateMachineActor) {
+        const finalState = stateMachineActor.getSnapshot();
+        
+        // Handle completion states
+        if (finalState.value === 'success' || finalState.value === 'callbackScheduled' || finalState.value === 'fallback') {
+          console.log('📋 State machine reached final state:', finalState.value);
+          
+          await handleConversationEnd({
+            state: finalState.value,
+            context: finalState.context
+          });
+          return; // Exit early for final states
+        }
+      }
 
       // Check for final state using enhanced pipeline if available
       if (enhancedSession) {
@@ -902,6 +1102,23 @@ fastify.register(async function (fastify) {
         
       } else if (data.event === 'stop') {
         console.log('Twilio stream stopped');
+        
+        // CRITICAL FIX: Clear all timeouts and stop services to prevent stray TTS
+        if (silenceTimeout) {
+          clearTimeout(silenceTimeout);
+          silenceTimeout = null;
+        }
+        if (conversationTimeout) {
+          clearTimeout(conversationTimeout);
+          conversationTimeout = null;
+        }
+        if (turnBufferTimeout) {
+          clearTimeout(turnBufferTimeout);
+          turnBufferTimeout = null;
+        }
+        
+        // Stop STT service
+        sttService.stopListening();
         
         // Update call status
         /* if (callId) {

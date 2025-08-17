@@ -109,18 +109,6 @@ class STTService extends EventEmitter {
       }
     }, 3000);
 
-    // Also emit ready when the connection state changes to OPEN
-    if (this.connection) {
-      this.connection.on('open', () => {
-        console.log('STT connection opened successfully');
-        if (!this._readyEmitted) {
-          this._readyEmitted = true;
-          this.emit('ready');
-        }
-        // Flush any queued audio data
-        this.flushAudioQueue();
-      });
-    }
 
     // Unified handler to process transcript events for Deepgram v4 SDK
     const handleTranscriptEvent = (data) => {
